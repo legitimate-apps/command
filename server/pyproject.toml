@@ -1,0 +1,80 @@
+[project]
+name = "command-server"
+version = "1.0.0"
+description = "Lean self-hosted backend for Command: a REST API for the iOS app and an MCP server for agents, over one SQLite store."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+  { name = "Legitimate LLC" },
+]
+
+dependencies = [
+  "mcp>=1.27,<2",
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.32,<1",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.6,<3",
+  "bcrypt>=4.2,<6",
+  "structlog>=25.1,<26",
+  "python-dateutil>=2.9,<3",
+  "anyio>=4.6,<5",
+  "httpx[http2]>=0.28,<1",           # http2 extra (h2) — APNs is HTTP/2 only
+  "pyjwt[crypto]>=2.9,<3",           # ES256 JWT signing for APNs token auth
+  "pydantic-ai-slim[anthropic,openai]>=1.107.0",
+  "python-multipart>=0.0.18,<1",     # FastAPI multipart form parsing (attachment uploads)
+]
+
+[project.scripts]
+command-server = "command.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/command/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/command"]
+
+[dependency-groups]
+dev = [
+  "ruff>=0.8,<1",
+  "mypy>=1.13,<2",
+  "pytest>=9.0.3,<10",
+  "pytest-asyncio>=1,<2",
+  "types-python-dateutil>=2.9,<3",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "B", "C4", "UP", "PT", "SIM", "RUF"]
+ignore = [
+  "N818",    # short exception names (NotFound, Conflict, ConfirmRequired) are part of the contract
+  "SIM118",  # `for k in row.keys()` is REQUIRED for sqlite3.Row (iterating a Row yields values, not keys)
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI parameter markers are immutable sentinels; ruff exempts Query/Form/Depends by
+# default but (as of 0.15) misses File.
+extend-immutable-calls = ["fastapi.File"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PT018", "N812"]
+"src/command/core/_wordlist.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+pretty = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]

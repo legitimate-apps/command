@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Partial Info.plist, merged with the keys GENERATE_INFOPLIST_FILE produces
+	  from the INFOPLIST_KEY_* build settings (usage strings, encryption, launch
+	  screen, accent/appicon). It exists only to set per-idiom orientation, which
+	  the `INFOPLIST_KEY_…~ipad` build-setting suffix cannot express:
+	    • iPhone  → portrait only
+	    • iPad    → all four (required for multitasking + multi-window, which the
+	                iPad/Mac split-view shell needs)
+	  UIRequiresFullScreen is intentionally absent so the iPad app is
+	  multitasking-capable.
+	-->
+	<!--
+	  Allow plain-HTTP only to loopback / .local / link-local hosts. This is the
+	  App-Store-safe ATS key (it does NOT weaken security for public HTTPS
+	  endpoints like the production tunnel) and lets a build point at a local dev
+	  server, e.g. `-command.serverURL http://127.0.0.1:PORT`.
+	-->
+	<!--
+	  The command:// URL scheme. Today its one route is command://invite/<token> —
+	  an invited delegatee taps the shared link and lands in the redeem sheet with
+	  the token filled in. Handled by AppState.handleIncomingURL via onOpenURL.
+	-->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.legitimateapps.command</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>command</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

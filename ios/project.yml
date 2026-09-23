@@ -1,0 +1,135 @@
+# ios/project.yml — XcodeGen spec. The .xcodeproj is generated (gitignored):
+#   cd ios && xcodegen generate
+# Signing is disabled for simulator/CI; the archive step overrides it explicitly.
+name: Command
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio.git
+    from: 0.16.1
+  # In-app subscriptions (Command Pro). The SPM-optimized mirror resolves faster
+  # than the main purchases-ios repo (no test sources). Pins to 5.x (StoreKit 2).
+  RevenueCat:
+    url: https://github.com/RevenueCat/purchases-ios-spm.git
+    from: 5.90.2
+options:
+  bundleIdPrefix: com.legitimateapps
+  deploymentTarget:
+    iOS: '17.0'
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: '5.10'
+    DEVELOPMENT_TEAM: 3LTL47SJ8C
+    CODE_SIGNING_ALLOWED: 'NO'
+    CODE_SIGN_IDENTITY: ''
+targets:
+  Command:
+    type: application
+    platform: iOS
+    sources: [Command]
+    dependencies:
+      - package: FluidAudio
+      - package: RevenueCat
+        product: RevenueCat
+      # iOS ONLY. A Mac Catalyst build is a macOS binary, and macOS refuses to embed an
+      # iOS .appex: "This target is built for macOS but contains embedded content built
+      # for iOS, which is not allowed." Without this filter the Catalyst build fails
+      # outright while the iOS build stays green, so nothing catches it until the Mac
+      # release does. Widgets on Catalyst would need a separate macOS widget extension.
+      - target: CommandWidgets
+        embed: true
+        platformFilter: iOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.command
+        GENERATE_INFOPLIST_FILE: 'YES'
+        # A partial Info.plist merged with the generated keys above. Holds only the
+        # per-idiom orientation set (iPhone portrait / iPad all four) — the
+        # `INFOPLIST_KEY_…~ipad` build-setting suffix is NOT honored, so a real plist
+        # is required to differentiate. Dropping UIRequiresFullScreen here is what
+        # opts the iPad app back into multitasking + multi-window (needed for the
+        # iPad/Mac shell); iPhone stays portrait-only via the plist's base key.
+        INFOPLIST_FILE: Command/Info.plist
+        # Mac Catalyst (Mac idiom — "Optimize interface for Mac"). The same Command
+        # target produces the Mac binary; keep the SAME bundle id so Mac ships inside
+        # the one App Store record (universal purchase / one subscription).
+        SUPPORTS_MACCATALYST: 'YES'
+        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: 'NO'
+        CODE_SIGN_ENTITLEMENTS: Command/Command.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # 1=iPhone, 2=iPad, 6=Mac (the Mac idiom). Including 6 is exactly what
+        # Xcode's "Optimize interface for Mac" checkbox does — it switches Catalyst
+        # from the scaled iPad idiom to the native Mac idiom. Ignored on iOS builds.
+        TARGETED_DEVICE_FAMILY: '1,2,6'
+        INFOPLIST_KEY_UILaunchScreen_Generation: 'YES'
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: 'NO'  # standard HTTPS only — skips the TestFlight prompt
+        # Mac App Store requires an app category in the bundle Info.plist (iOS sets
+        # this in ASC metadata only). Ignored on iOS; mandatory for the Mac build.
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: Command records your voice so it can transcribe text for notes and your assistant on your device.
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Command uses speech recognition to turn your voice into text for notes and your assistant.
+        INFOPLIST_KEY_NSCameraUsageDescription: Command uses the camera so you can attach a photo to a message for the assistant.
+        INFOPLIST_KEY_NSFaceIDUsageDescription: Command uses Face ID to confirm it is you before revealing hidden notes and items.
+        CURRENT_PROJECT_VERSION: '65'
+        MARKETING_VERSION: '1.0'
+      # Release/archive signs with manual distribution against the ASC-created
+      # "Command CI" profile. Scoped to this target (not the global base / command
+      # line) so it never lands on FluidAudio's SPM targets, which reject profiles.
+      # Debug/simulator stays unsigned via the base CODE_SIGNING_ALLOWED=NO.
+      configs:
+        Release:
+          CODE_SIGNING_ALLOWED: 'YES'
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: 'Apple Distribution'
+          # iOS archive → the ASC-created "Command CI" App Store profile.
+          PROVISIONING_PROFILE_SPECIFIER: 'Command CI'
+          # Mac Catalyst archive → its own Mac App Store profile (same bundle id,
+          # MAC_CATALYST_APP_STORE). sdk-scoped so the one Command target signs
+          # correctly for either platform without disturbing the SPM packages
+          # (which must stay on the unsigned base config — automatic signing would
+          # force a per-target team on FluidAudio/RevenueCat and fail the archive).
+          'PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]': 'Command Mac Catalyst AppStore'
+  CommandWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: '26.0'
+    sources:
+      - CommandWidgets
+      - Command/Widgets/AssistantSurfaceLogic.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.command.widgets
+        INFOPLIST_FILE: CommandWidgets/Info.plist
+        GENERATE_INFOPLIST_FILE: 'NO'
+        CODE_SIGN_ENTITLEMENTS: CommandWidgets/CommandWidgets.entitlements
+        SKIP_INSTALL: 'YES'
+        APPLICATION_EXTENSION_API_ONLY: 'YES'
+        CURRENT_PROJECT_VERSION: '65'
+        MARKETING_VERSION: '1.0'
+      # An embedded extension signs SEPARATELY from its host, with its own App ID and its own
+      # profile — the host's "Command CI" profile cannot cover com.legitimateapps.command.widgets.
+      # Without this the widget inherits the project-wide CODE_SIGNING_ALLOWED=NO while the host
+      # IS signed, and the archive fails with the genuinely misleading "Embedded binary is not
+      # signed with the same certificate as the parent app". Debug/simulator stays unsigned.
+      configs:
+        Release:
+          CODE_SIGNING_ALLOWED: 'YES'
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: 'Apple Distribution'
+          PROVISIONING_PROFILE_SPECIFIER: 'Command Widgets CI'
+  CommandTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [CommandTests]
+    dependencies:
+      - target: Command
+schemes:
+  Command:
+    build:
+      targets:
+        Command: all
+        CommandTests: [test]
+    test:
+      gatherCoverageData: true
+      targets: [CommandTests]

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Mac Catalyst → App Store Connect (TestFlight) export.
+  Automatic signing + the ASC API key (passed via -allowProvisioningUpdates on the
+  export call) lets Xcode mint the Mac App Store provisioning profile and the
+  installer certificate on demand, and `destination: upload` ships the signed .pkg
+  straight to App Store Connect — no separate altool step.
+-->
+<dict>
+    <key>method</key>
+    <string>app-store</string>
+    <key>destination</key>
+    <string>upload</string>
+    <key>teamID</key>
+    <string>3LTL47SJ8C</string>
+    <key>signingStyle</key>
+    <string>automatic</string>
+    <key>manageAppVersionAndBuildNumber</key>
+    <false/>
+</dict>
+</plist>

@@ -1,0 +1,83 @@
+name: PII guard
+
+# Keeps personal data out of this public repository. Two layers:
+#  - generic patterns anyone's fork can run (absolute home paths, non-noreply author emails);
+#  - a private denylist (repository secret PII_DENYLIST, one token per line) checked against
+#    the tree and commit metadata. Matches are reported by file and line only, never echoed.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pii-guard-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Scan
+        env:
+          PII_DENYLIST: ${{ secrets.PII_DENYLIST }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          python3 - <<'EOF'
+          import os, re, subprocess, sys
+
+          def git(*args):
+              return subprocess.run(["git", *args], check=True, capture_output=True).stdout
+
+          problems = []
+          files = [f for f in git("ls-files", "-z").decode().split("\0") if f]
+          generic = [
+              ("absolute home path", re.compile(rb"/Users/[A-Za-z][\w.-]+/|/home/(?!command\b)[a-z][\w.-]*/")),
+          ]
+          denylist = [t.strip().casefold() for t in os.environ.get("PII_DENYLIST", "").splitlines() if t.strip()]
+
+          for path in files:
+              try:
+                  data = open(path, "rb").read()
+              except (IsADirectoryError, FileNotFoundError):
+                  continue
+              if b"\0" in data[:8000]:
+                  continue
+              for n, line in enumerate(data.splitlines(), 1):
+                  for label, rx in generic:
+                      if rx.search(line):
+                          problems.append(f"{path}:{n}: {label}")
+                  low = line.decode("utf-8", "replace").casefold()
+                  if any(t in low for t in denylist):
+                      problems.append(f"{path}:{n}: denylisted token")
+
+          base = os.environ.get("BASE", "")
+          rng = f"{base}..HEAD" if base and set(base) != {"0"} else "HEAD"
+          try:
+              log = git("log", "--format=%H%x00%ae%x00%ce%x00%an%x00%B%x01", rng).decode("utf-8", "replace")
+          except subprocess.CalledProcessError:
+              log = git("log", "-1", "--format=%H%x00%ae%x00%ce%x00%an%x00%B%x01").decode("utf-8", "replace")
+          for entry in filter(None, (e.strip() for e in log.split("\x01"))):
+              sha, author, committer, name, body = (entry.split("\0") + [""] * 5)[:5]
+              for email in (author, committer) if os.environ.get("GITHUB_EVENT_NAME") == "push" else ():
+                  if not (email.endswith("@users.noreply.github.com") or email == "noreply@github.com"):
+                      problems.append(f"commit {sha[:10]}: non-noreply email")
+              meta = f"{name}\n{body}".casefold()
+              if any(t in meta for t in denylist):
+                  problems.append(f"commit {sha[:10]}: denylisted token in metadata")
+
+          if not denylist:
+              print("PII_DENYLIST not available (fork PR?) — ran generic checks only.")
+          if problems:
+              print("\n".join(sorted(set(problems))))
+              sys.exit(1)
+          print(f"Clean: {len(files)} files checked.")
+          EOF

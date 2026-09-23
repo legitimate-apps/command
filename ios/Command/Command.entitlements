@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.legitimateapps.command</string>
+	</array>
+	<!--
+	  App Sandbox is required for a Mac Catalyst app. These keys are macOS-only and
+	  are ignored on iOS/iPadOS builds, so a single entitlements file is safe across
+	  platforms:
+	    • app-sandbox        — mandatory for Mac Catalyst
+	    • network.client     — REST API + RevenueCat
+	    • device.audio-input — microphone (voice capture / transcription)
+	    • user-selected r/w  — future file import/export from the Mac open panel
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<!--
+	  APNs push (reminders). 'production' matches distribution signing (TestFlight / App Store),
+	  which is how this app ships; the client registers environment=sandbox only for DEBUG builds.
+	  Ignored on the simulator. A local development-signed device build would need 'development'.
+	-->
+	<key>aps-environment</key>
+	<string>production</string>
+</dict>
+</plist>

@@ -1,0 +1,66 @@
+# ─── Secrets & PII (NEVER COMMIT) ───────────────────────────────────────────
+# This repository is public.
+.env
+.env.*
+!.env.example
+*.p8
+*.pem
+*.key
+*.mobileprovision
+*.p12
+credentials.json
+secrets/
+AuthKey_*.p8
+
+# ─── Local agent / tooling artifacts ────────────────────────────────────────
+.claude/
+.playwright-mcp/            # browser screenshots may capture signup/billing forms
+.DS_Store
+*.log
+
+# ─── Server (Python) ────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+# Runtime data (SQLite lives outside the repo on the server)
+server/data/
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-wal
+*.db-shm
+
+# ─── iOS (SwiftUI / XcodeGen) ───────────────────────────────────────────────
+# The .xcodeproj is generated from project.yml by XcodeGen — never commit it.
+ios/*.xcodeproj/
+ios/DerivedData/
+ios/build/
+**/xcuserdata/
+**/*.xcworkspace/xcuserdata/
+.swiftpm/
+# On-device model weights are downloaded at runtime, never bundled into git
+ios/**/Models/*.mlmodelc/
+ios/**/*.mlpackage/
+
+# Playwright MCP browser snapshots — may contain account PII
+
+# APNs private key mounted into the container (never commit)
+deploy/keys/
+
+# ─── Marketing working files ────────────────────────────────────────────────
+marketing/frames/*.html     # generated per render from compose.py
+marketing/research/*.log     # delegate transcripts
+marketing/raw/PROGRESS*.txt  # pilot beacons
+.coverage
+
+# Maintainer-local notes and agent overlays (never committed)
+/ops/
+CLAUDE.local.md
+AGENTS.override.md
