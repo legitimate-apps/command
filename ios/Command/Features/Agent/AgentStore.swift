@@ -15,25 +15,30 @@
 import Foundation
 import Observation
 
-/// Which model tier to run. `auto` uses the server's weighted router; the rest
-/// force a tier so the user can ask harder questions on Opus or save budget on Fast.
+/// Which model tier to run. `auto` uses the server's weighted router; the rest force a
+/// tier. Each tier is shown by the real name of the model it runs (see `AgentModelLabel`),
+/// taken from the server's `/api/agent/models` so a self-hosted override is named truthfully;
+/// `defaultSlug` is the stock server's model, used until that list arrives.
 enum AgentModelChoice: String, CaseIterable, Identifiable, Hashable {
-    /// Claude tiers first (the house default), then the non-Anthropic alternates.
-    case auto, opus, sonnet, fast, glm, kimi, gpt
+    /// Claude tiers first (the house default), then the other houses. `gpt` is GPT-6 Sol —
+    /// the id predates the name and stays so older servers keep understanding it.
+    case auto, opus, sonnet, fast, glm, kimi, gpt, luna
 
     var id: String { rawValue }
     /// Sent to the server; `auto` maps to the weighted router there.
     var apiValue: String? { self == .auto ? nil : rawValue }
 
-    var label: String {
+    /// The stock server's model for this tier.
+    var defaultSlug: String? {
         switch self {
-        case .auto: return "Auto"
-        case .opus: return "Opus"
-        case .sonnet: return "Sonnet"
-        case .fast: return "Fast"
-        case .glm: return "GLM"
-        case .kimi: return "Kimi"
-        case .gpt: return "GPT"
+        case .auto: return nil
+        case .opus: return "anthropic/claude-opus-5.5"
+        case .sonnet: return "anthropic/claude-sonnet-5"
+        case .fast: return "anthropic/claude-haiku-4.5"
+        case .glm: return "z-ai/glm-5.3"
+        case .kimi: return "moonshotai/kimi-k3"
+        case .gpt: return "openai/gpt-6-sol"
+        case .luna: return "openai/gpt-6-luna"
         }
     }
 
@@ -43,9 +48,10 @@ enum AgentModelChoice: String, CaseIterable, Identifiable, Hashable {
         case .opus: return "Most capable, pricier"
         case .sonnet: return "Strong all-rounder"
         case .fast: return "Quick & capable"
-        case .glm: return "Cheapest — text only"
+        case .glm: return "Budget — text only"
         case .kimi: return "Long-context alternate"
-        case .gpt: return "OpenAI alternate"
+        case .gpt: return "OpenAI's flagship"
+        case .luna: return "Cheapest, very fast"
         }
     }
 
@@ -57,15 +63,22 @@ enum AgentModelChoice: String, CaseIterable, Identifiable, Hashable {
         case .fast: return "bolt.fill"
         case .glm: return "leaf.fill"
         case .kimi: return "circle.hexagongrid.fill"
-        case .gpt: return "cpu"
+        case .gpt: return "sun.max.fill"
+        case .luna: return "moon.fill"
         }
     }
 
-    /// Whether this tier accepts image attachments — drives the composer's attach
-    /// affordance. GLM is text-only on OpenRouter; the server independently
-    /// re-routes an image turn to the multimodal default and reports the model it
-    /// actually used, so this is the friendly guard, not the safety one.
-    var supportsImages: Bool { self != .glm }
+    /// Whether this tier accepts image attachments when the server hasn't said. GLM is
+    /// text-only on OpenRouter; the server independently re-routes an image turn to the
+    /// multimodal default and reports the model it used, so this is the friendly guard.
+    var supportsImagesByDefault: Bool { self != .glm }
+}
+
+/// One forceable tier as the server reports it (`GET /api/agent/models`).
+struct AgentModelTier: Decodable, Equatable, Sendable {
+    let id: String
+    let slug: String
+    let images: Bool
 }
 
 /// One image the user attached to the next message. Holds the display thumbnail and
@@ -82,7 +95,7 @@ struct ChatToolEvent: Identifiable, Equatable {
     let name: String
     var done: Bool
     /// A short target pulled from the call's `args` — e.g. the task title or search query —
-    /// so a chip can read "Creating task: Make saffron milk" instead of a bare verb. nil when
+    /// so a chip can read "Creating task: Water the plants" instead of a bare verb. nil when
     /// the tool has no obvious subject (or an older server didn't send args).
     var detail: String? = nil
     /// The entity the tool touched, from `tool_done`. Present only for write tools that
@@ -132,6 +145,9 @@ final class AgentStore {
     var usage: AgentUsage?
     var errorMessage: String?
     var modelChoice: AgentModelChoice = .auto
+    /// The server's tiers, once loaded. nil (not loaded yet, or a server that predates the
+    /// endpoint) falls back to the stock list without Luna, which such a server doesn't know.
+    private(set) var serverTiers: [AgentModelTier]?
     /// Per-conversation opt-in to let the agent read hidden (invisible-ink) items.
     /// Resets to false on every new chat / thread switch — the user must re-enable it.
     var allowHidden = false
@@ -175,6 +191,39 @@ final class AgentStore {
 
     func loadUsage(client: APIClient) async {
         usage = try? await client.agentUsage()
+    }
+
+    func loadModels(client: APIClient) async {
+        guard let tiers = try? await client.agentModels() else { return }
+        serverTiers = tiers
+        if modelChoice != .auto, !availableChoices.contains(modelChoice) { modelChoice = .auto }
+    }
+
+    #if DEBUG
+    func setServerTiersForTesting(_ tiers: [AgentModelTier]) { serverTiers = tiers }
+    #endif
+
+    /// What the picker offers: Auto, then each tier the server runs, in its order.
+    var availableChoices: [AgentModelChoice] {
+        guard let serverTiers else {
+            return AgentModelChoice.allCases.filter { $0 != .luna }
+        }
+        return [.auto] + serverTiers.compactMap { AgentModelChoice(rawValue: $0.id) }
+    }
+
+    /// The model a tier runs on this server (the stock default until the list loads).
+    func slug(for choice: AgentModelChoice) -> String? {
+        serverTiers?.first { $0.id == choice.rawValue }?.slug ?? choice.defaultSlug
+    }
+
+    /// The tier's name as the user sees it: the real model, e.g. "GPT-6 Sol".
+    func displayName(for choice: AgentModelChoice) -> String {
+        guard let slug = slug(for: choice) else { return "Auto" }
+        return AgentModelLabel.name(slug)
+    }
+
+    func supportsImages(_ choice: AgentModelChoice) -> Bool {
+        serverTiers?.first { $0.id == choice.rawValue }?.images ?? choice.supportsImagesByDefault
     }
 
     /// Remaining budget as a 0...1 fraction of the cap (for the budget meter).

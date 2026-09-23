@@ -318,6 +318,9 @@ def test_resolve_model_slug() -> None:
     assert runner.resolve_model_slug("kimi") == s.agent_model_kimi
     assert runner.resolve_model_slug("gpt") == s.agent_model_gpt
     assert runner.resolve_model_slug("terra") == s.agent_model_gpt  # pre-GPT-6 client alias
+    assert runner.resolve_model_slug("sol") == s.agent_model_gpt
+    assert runner.resolve_model_slug("luna") == s.agent_model_gpt_luna
+    assert s.agent_model_gpt == "openai/gpt-6-sol" and s.agent_model_gpt_luna == "openai/gpt-6-luna"
     # auto / unknown / None fall through to the weighted router
     for choice in (None, "auto", "banana"):
         assert runner.resolve_model_slug(choice) in {s.agent_model_claude, s.agent_model_fast}
@@ -446,7 +449,7 @@ def test_every_configured_tier_has_a_pricing_row() -> None:
     s = get_settings()
     for slug in (
         s.agent_model_claude, s.agent_model_fast, s.agent_model_opus,
-        s.agent_model_glm, s.agent_model_kimi, s.agent_model_gpt,
+        s.agent_model_glm, s.agent_model_kimi, s.agent_model_gpt, s.agent_model_gpt_luna,
         s.ai_search_model,
     ):
         assert slug in pricing._RATES, f"{slug} has no pricing row"
@@ -458,10 +461,10 @@ def test_text_only_tier_falls_back_to_the_multimodal_default_on_image_turns() ->
     """GLM is text-only on OpenRouter. An image turn must re-route rather than
     error at the provider — and must NOT re-route when there are no images."""
     from command.config import get_settings
-    from command.core.agent import runner
+    from command.core.agent import runner, tiers
 
     s = get_settings()
-    assert s.agent_model_glm in runner.text_only_slugs()
+    assert s.agent_model_glm in tiers.text_only_slugs()
     assert runner.resolve_model_slug("glm", has_images=False) == s.agent_model_glm
     assert runner.resolve_model_slug("glm", has_images=True) == s.agent_model_claude
 
@@ -500,8 +503,8 @@ def test_tool_done_entity_summary() -> None:
     from command.core.agent import runner
 
     assert runner._tool_entity(
-        "create_assignment", '{"id": 42, "title": "Saffron milk"}'
-    ) == {"kind": "assignment", "id": 42, "label": "Saffron milk"}
+        "create_assignment", '{"id": 42, "title": "Water the plants"}'
+    ) == {"kind": "assignment", "id": 42, "label": "Water the plants"}
     assert runner._tool_entity(
         "upsert_person", '{"delegatee":{"id":7,"name":"Sam"},"created":true}'
     ) == {"kind": "person", "id": 7, "label": "Sam"}
@@ -628,7 +631,7 @@ def test_errored_run_still_meters_spend(client: TestClient, monkeypatch: pytest.
         yield {
             "type": "tool_done",
             "name": "create_assignment",
-            "entity": {"kind": "assignment", "id": 42, "label": "Saffron milk"},
+            "entity": {"kind": "assignment", "id": 42, "label": "Water the plants"},
         }
         yield {
             "type": "done", "output": "", "model": "anthropic/claude-opus-5",
@@ -639,7 +642,7 @@ def test_errored_run_still_meters_spend(client: TestClient, monkeypatch: pytest.
     monkeypatch.setattr(runner, "stream", fake_stream)
     r = client.post("/api/agent/chat", json={"message": "hi"})
     assert r.status_code == 200 and "error" in r.text
-    assert '"entity": {"kind": "assignment", "id": 42, "label": "Saffron milk"}' in r.text
+    assert '"entity": {"kind": "assignment", "id": 42, "label": "Water the plants"}' in r.text
     with connection(s.db_path) as conn:
         u = usage.get_usage(conn, aid)
     assert u.cost_usd > 0 and u.runs == 1  # errored, but the spend was recorded
@@ -658,3 +661,29 @@ def test_chat_enforces_cap(client: TestClient, monkeypatch: pytest.MonkeyPatch) 
     r = client.post("/api/agent/chat", json={"message": "hello"})
     assert r.status_code == 200
     assert "cap_reached" in r.text and "data:" in r.text
+
+
+def test_every_tier_is_priced() -> None:
+    """A tier missing from the rate table would be metered at the Sonnet-class default:
+    for GPT-6 Luna that is a 20x over-charge against the user's budget."""
+    from command.core.agent import pricing, tiers
+
+    for tier, slug in tiers.model_tiers():
+        assert slug in pricing._RATES, f"{tier} -> {slug} has no rate"
+    assert pricing.cost_usd("openai/gpt-6-luna", 1_000_000, 1_000_000) == 0.60
+
+
+def test_models_endpoint_lists_tiers_with_their_slugs(client) -> None:
+    r = client.post("/api/auth/register", json={"username": "sam", "password": "supersecret"})
+    assert r.status_code == 200, r.text
+    r = client.get("/api/agent/models")
+    assert r.status_code == 200, r.text
+    got = {t["id"]: t for t in r.json()["tiers"]}
+    assert list(got) == ["opus", "sonnet", "fast", "glm", "kimi", "gpt", "luna"]
+    assert got["gpt"]["slug"] == "openai/gpt-6-sol"
+    assert got["luna"]["slug"] == "openai/gpt-6-luna"
+    assert got["glm"]["images"] is False and got["luna"]["images"] is True
+
+
+def test_models_endpoint_requires_a_session(client) -> None:
+    assert client.get("/api/agent/models").status_code == 401

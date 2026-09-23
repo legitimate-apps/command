@@ -54,11 +54,11 @@ def test_search_query_and_unprocessed(conn: sqlite3.Connection) -> None:
 
 def test_fts_search_or_terms_and_recent_fallback(conn: sqlite3.Connection) -> None:
     aid = _acct(conn)
-    meal = notes.create(conn, aid, "Cook saffron rice tonight")
+    meal = notes.create(conn, aid, "Cook paprika rice tonight")
     grocery = notes.create(conn, aid, "Buy spinach tomorrow")
     notes.create(conn, aid, "Unrelated journal entry")
 
-    hits, _ = notes.search(conn, aid, query="saffron spinach")
+    hits, _ = notes.search(conn, aid, query="paprika spinach")
     assert {note.id for note in hits} == {meal.id, grocery.id}
 
     # A lexical miss is an honest empty result — not unrelated recent notes posing as matches.
@@ -69,7 +69,7 @@ def test_fts_search_or_terms_and_recent_fallback(conn: sqlite3.Connection) -> No
     recent, _ = notes.search(conn, aid, limit=2)
     assert found.matched is False and found.items == []
     assert [note.id for note in found.recent] == [note.id for note in recent]
-    hit = notes.search_with_fallback(conn, aid, query="saffron")
+    hit = notes.search_with_fallback(conn, aid, query="paprika")
     assert hit.matched is True and [n.id for n in hit.items] == [meal.id] and hit.recent == []
 
 

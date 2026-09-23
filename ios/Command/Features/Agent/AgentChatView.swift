@@ -120,7 +120,13 @@ struct AgentChatView: View {
             .task {
                 await store.loadThreads(client: app.client)
                 await store.loadUsage(client: app.client)
+                await store.loadModels(client: app.client)
                 #if DEBUG
+                // Screenshot hook: `-COMMAND_AGENT_MODEL luna` preselects a tier.
+                if let tier = UserDefaults.standard.string(forKey: "COMMAND_AGENT_MODEL"),
+                   let choice = AgentModelChoice(rawValue: tier) {
+                    store.modelChoice = choice
+                }
                 // Screenshot hook: `-COMMAND_AGENT_DEMO "ask…"` auto-sends one message
                 // so a live streamed conversation can be captured. Debug builds only.
                 if let demo = UserDefaults.standard.string(forKey: "COMMAND_AGENT_DEMO"),
@@ -383,14 +389,14 @@ struct AgentChatView: View {
     private var modelPicker: some View {
         Menu {
             Picker("Model", selection: Binding(get: { store.modelChoice }, set: { store.modelChoice = $0 })) {
-                ForEach(AgentModelChoice.allCases) { choice in
-                    Text("\(choice.label) — \(choice.detail)").tag(choice)
+                ForEach(store.availableChoices) { choice in
+                    Text("\(store.displayName(for: choice)) — \(choice.detail)").tag(choice)
                 }
             }
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: store.modelChoice.icon).font(.system(size: 11)).accessibilityHidden(true)
-                Text(store.modelChoice.label).font(Typeface.body(12, .semibold))
+                Text(store.displayName(for: store.modelChoice)).font(Typeface.body(12, .semibold))
                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 8)).accessibilityHidden(true)
             }
             .foregroundStyle(Palette.inkSecondary)
@@ -471,7 +477,7 @@ struct AgentChatView: View {
                 }
                 .accessibilityLabel("Stop")
             } else {
-                if store.modelChoice.supportsImages { attachButton }
+                if store.supportsImages(store.modelChoice) { attachButton }
                 micButton
             }
             Button { send() } label: {
@@ -698,7 +704,7 @@ private struct ChatBubble: View {
 
     private var caption: String? {
         guard !message.isUser, !message.pending, let model = message.model else { return nil }
-        var parts = [AgentModelLabel.short(model)]
+        var parts = [AgentModelLabel.name(model)]
         if let cost = message.costUsd, cost > 0 { parts.append(String(format: "$%.3f", cost)) }
         return parts.joined(separator: " · ")
     }
@@ -721,7 +727,7 @@ private struct ToolChip: View {
         return e
     }
 
-    /// "Creating a task: Make saffron milk" / "Reading your notes: 'meals'". Falls back to the
+    /// "Creating a task: Water the plants" / "Reading your notes: 'meals'". Falls back to the
     /// bare verb when the tool has no subject.
     private var label: String {
         let base = AgentToolLabel.describe(event.name)
@@ -830,18 +836,26 @@ enum AgentToolLabel {
 }
 
 enum AgentModelLabel {
-    /// A friendly short name from an OpenRouter slug ("anthropic/claude-sonnet-5" → "Sonnet").
-    /// Matches on the family, not the version, so a tier bump needs no client change.
-    /// Non-Anthropic alternates (GLM / Kimi / GPT) are named here too; anything
-    /// unrecognized falls back to the slug's trailing path component.
-    static func short(_ slug: String) -> String {
-        let s = slug.lowercased()
-        if s.contains("opus") { return "Opus" }
-        if s.contains("sonnet") { return "Sonnet" }
-        if s.contains("haiku") { return "Haiku" }
-        if s.contains("glm") { return "GLM" }
-        if s.contains("kimi") { return "Kimi" }
-        if s.hasPrefix("openai/") || s.contains("gpt") { return "GPT" }
-        return slug.split(separator: "/").last.map(String.init) ?? slug
+    /// The model's own name from an OpenRouter slug, e.g. "anthropic/claude-sonnet-5" →
+    /// "Claude Sonnet 5", "openai/gpt-6-sol" → "GPT-6 Sol", "z-ai/glm-5.3" → "GLM-5.3",
+    /// "moonshotai/kimi-k3" → "Kimi K3". Built from the slug rather than a lookup table, so
+    /// a newer model or a self-hosted override is named correctly with no app change.
+    static func name(_ slug: String) -> String {
+        var id = slug.split(separator: "/").last.map(String.init) ?? slug
+        if let colon = id.firstIndex(of: ":") { id = String(id[..<colon]) }   // ":batch", ":free"
+        let acronyms: Set<String> = ["gpt", "glm"]
+        var words: [String] = []
+        for part in id.split(separator: "-").map(String.init) where !part.isEmpty {
+            let lower = part.lowercased()
+            if acronyms.contains(lower) {
+                words.append(lower.uppercased())
+            } else if let last = words.last, acronyms.contains(last.lowercased()),
+                      part.first?.isNumber == true {
+                words[words.count - 1] = "\(last)-\(part)"                 // "GPT-6", "GLM-5.3"
+            } else {
+                words.append(part.prefix(1).uppercased() + part.dropFirst())
+            }
+        }
+        return words.isEmpty ? slug : words.joined(separator: " ")
     }
 }

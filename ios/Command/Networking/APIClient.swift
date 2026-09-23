@@ -619,6 +619,13 @@ final class APIClient {
         try await get("/api/agent/usage").decoded()
     }
 
+    /// The model tiers this server offers and the model each runs.
+    func agentModels() async throws -> [AgentModelTier] {
+        struct Response: Decodable { let tiers: [AgentModelTier] }
+        let response: Response = try await get("/api/agent/models").decoded()
+        return response.tiers
+    }
+
     /// The account's assistant entitlement — drives the consent gate + paywall.
     func agentEntitlement() async throws -> AgentEntitlement {
         try await get("/api/agent/entitlement").decoded()

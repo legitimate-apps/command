@@ -251,7 +251,7 @@ final class AppState {
                     Delegatee(id: 2, accountId: 0, slug: "marcus", name: "Marcus Lee", kind: "human",
                               leadTimeMinutes: 120, metadata: [:],
                               active: true, isSelf: false, createdAt: stamp, updatedAt: stamp),
-                    Delegatee(id: 3, accountId: 0, slug: "opus", name: "Claude Opus", kind: "ai_model",
+                    Delegatee(id: 3, accountId: 0, slug: "opus", name: "Claude Opus 5.5", kind: "ai_model",
                               leadTimeMinutes: 0, metadata: ["model_id": .string("claude-opus-5.5")],
                               active: true, isSelf: false, createdAt: stamp, updatedAt: stamp),
                 ]

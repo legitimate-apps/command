@@ -42,6 +42,7 @@ from ...db import connection
 from .. import accounts as accounts_core
 from .. import clock
 from .. import confirm as confirm_core
+from . import tiers
 from .threads import ORIGIN_A2A, ORIGIN_APP
 from .tools import PEER_TOOLS, SYSTEM_PROMPT, TOOLS, AgentDeps
 
@@ -174,12 +175,6 @@ def pick_model_slug() -> str:
     return s.agent_model_claude if random.random() < s.agent_claude_weight else s.agent_model_fast
 
 
-def text_only_slugs() -> frozenset[str]:
-    """Configured slugs that cannot accept image parts (`agent_text_only_models`)."""
-    raw = get_settings().agent_text_only_models
-    return frozenset(part.strip() for part in raw.split(",") if part.strip())
-
-
 def resolve_model_slug(choice: str | None, *, has_images: bool = False) -> str:
     """Map a user-facing model choice to a concrete slug. 'auto' (or unknown/None)
     uses the nondeterministic router; the rest force a tier so the user can ask
@@ -190,22 +185,8 @@ def resolve_model_slug(choice: str | None, *, has_images: bool = False) -> str:
     provider. The run reports the slug it actually used, so the client's model chip
     shows the substitution instead of silently lying about the tier."""
     s = get_settings()
-    match (choice or "auto").strip().lower():
-        case "opus":
-            slug = s.agent_model_opus
-        case "sonnet" | "claude":
-            slug = s.agent_model_claude
-        case "fast" | "qwen":
-            slug = s.agent_model_fast
-        case "glm":
-            slug = s.agent_model_glm
-        case "kimi":
-            slug = s.agent_model_kimi
-        case "gpt" | "terra":
-            slug = s.agent_model_gpt
-        case _:
-            slug = pick_model_slug()
-    if has_images and slug in text_only_slugs():
+    slug = tiers.slug_for(choice) or pick_model_slug()
+    if has_images and slug in tiers.text_only_slugs():
         slug = s.agent_model_claude
     return slug
 

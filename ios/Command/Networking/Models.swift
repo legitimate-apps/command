@@ -499,7 +499,7 @@ struct AgentEvent: Decodable {
     var userMessageId: Int?       // persisted id of the user turn just sent (thread)
     var model: String?
     var name: String?             // tool name (tool / tool_done)
-    var args: [String: JSONValue]?  // tool-call arguments (tool) — e.g. {"title":"Make saffron milk"}
+    var args: [String: JSONValue]?  // tool-call arguments (tool) — e.g. {"title":"Water the plants"}
     var entity: AgentEntityRef?     // touched entity (tool_done) — for a tappable, deep-linkable chip
     var delta: String?            // assistant text delta (text)
     var output: String?           // final assistant text (done)

@@ -101,15 +101,16 @@ class Settings(BaseSettings):
     # Non-Anthropic tiers on the same OpenRouter key (refreshed 2026-09-22). GLM 5.3 is the
     # budget workhorse — ~4x cheaper than Sonnet with a 1M window — but is TEXT-ONLY on
     # OpenRouter, so it's listed in `agent_text_only_models` below. Kimi K3 and GPT-6 Sol
-    # are alternates from other houses, not savings. The GPT tier was "terra" (GPT-5.6
-    # Terra) until OpenAI's GPT-6 line shipped without a Terra; the neutral "gpt" id keeps
-    # the tier stable across OpenAI's renames, and "terra" still resolves for old clients.
+    # are alternates from other houses, not savings; GPT-6 Luna is OpenAI's small, cheap
+    # model. The Sol tier's id stays "gpt" (it was "terra", GPT-5.6 Terra, before GPT-6) so
+    # older clients keep working; "terra" and "sol" resolve to it too.
     agent_model_glm: str = "z-ai/glm-5.3"
     agent_model_kimi: str = "moonshotai/kimi-k3"
     agent_model_gpt: str = Field(
         default="openai/gpt-6-sol",
         validation_alias=AliasChoices("COMMAND_AGENT_MODEL_GPT", "COMMAND_AGENT_MODEL_TERRA"),
     )
+    agent_model_gpt_luna: str = "openai/gpt-6-luna"
     agent_text_only_models: str = "z-ai/glm-5.3"
     # OpenRouter provider routing for EVERY model call (agent, note titles, web-search
     # synthesis). "deny" refuses upstream providers that may train on prompts — user

@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from ..core import accounts as accounts_core
 from ..core import entitlements
-from ..core.agent import settle, threads, usage
+from ..core.agent import settle, threads, tiers, usage
 from ..db import connection
 from ..errors import AuthFailed, Conflict, NotFound, ValidationError
 from .common import Page
@@ -65,7 +65,8 @@ class ChatImage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     thread_id: int | None = None
-    model: str | None = None  # "auto" (default) | "opus" | "sonnet" | "fast" | "glm" | "kimi" | "gpt"
+    # "auto" (default) or a tier id from GET /api/agent/models
+    model: str | None = None
     # per-chat opt-in to let the agent read hidden items (defaults off each chat)
     allow_hidden: bool = False
     # Optional image attachments, sent natively to a vision-capable model this turn.
@@ -408,6 +409,26 @@ class UsageSummary(BaseModel):
     output_tokens: int
     credits_enabled: bool = False   # whether the USD-budget monetization model is live
     budget_governed: bool = False   # true ⇒ the client shows remaining x CREDIT_MULTIPLIER with a $
+
+
+class ModelTier(BaseModel):
+    id: str            # send as ChatRequest.model
+    slug: str          # the model it runs, e.g. "openai/gpt-6-sol"; the app names the tier from it
+    images: bool       # False ⇒ an image turn falls back to the default model
+
+
+class ModelTiers(BaseModel):
+    tiers: list[ModelTier]
+
+
+@router.get("/models", response_model=ModelTiers)
+def get_models(account: CurrentAccount) -> ModelTiers:
+    """The tiers the picker offers, in order ("auto" is implicit and not listed)."""
+    text_only = tiers.text_only_slugs()
+    return ModelTiers(tiers=[
+        ModelTier(id=tier, slug=slug, images=slug not in text_only)
+        for tier, slug in tiers.model_tiers()
+    ])
 
 
 @router.get("/usage", response_model=UsageSummary)

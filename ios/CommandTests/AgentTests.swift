@@ -30,8 +30,8 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(tool.args?["query"]?.asString, "x")   // args now decoded (E2a)
 
         // tool_done may carry a compact entity ref for a tappable chip (back-compat: optional).
-        let toolDone = try event(#"{"type":"tool_done","name":"create_assignment","entity":{"kind":"assignment","id":40,"label":"Make saffron milk"}}"#)
-        XCTAssertEqual(toolDone.entity, AgentEntityRef(kind: "assignment", id: 40, label: "Make saffron milk"))
+        let toolDone = try event(#"{"type":"tool_done","name":"create_assignment","entity":{"kind":"assignment","id":40,"label":"Water the plants"}}"#)
+        XCTAssertEqual(toolDone.entity, AgentEntityRef(kind: "assignment", id: 40, label: "Water the plants"))
         // Older servers omit entity — must still decode.
         let bare = try event(#"{"type":"tool_done","name":"create_note"}"#)
         XCTAssertNil(bare.entity)
@@ -140,34 +140,59 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(budgetUsage.displayRemaining, 18.15, accuracy: 0.0001)
     }
 
-    func testModelLabel() {
-        XCTAssertEqual(AgentModelLabel.short("anthropic/claude-sonnet-5"), "Sonnet")
-        XCTAssertEqual(AgentModelLabel.short("anthropic/claude-opus-5.5"), "Opus")
-        XCTAssertEqual(AgentModelLabel.short("anthropic/claude-haiku-4.5"), "Haiku")   // Fast tier is Haiku now
-        XCTAssertEqual(AgentModelLabel.short("z-ai/glm-5.3"), "GLM")
-        XCTAssertEqual(AgentModelLabel.short("moonshotai/kimi-k3"), "Kimi")
-        XCTAssertEqual(AgentModelLabel.short("openai/gpt-6-sol"), "GPT")
-        XCTAssertEqual(AgentModelLabel.short("openai/gpt-5.6-terra"), "GPT")  // pre-rename usage rows
-        // Matching is on the family, not the version, so a tier bump needs no client change.
-        XCTAssertEqual(AgentModelLabel.short("anthropic/claude-opus-6"), "Opus")
-        // Qwen is retired — no special mapping remains; a stray slug just yields its tail.
-        XCTAssertEqual(AgentModelLabel.short("qwen/qwen3-coder-plus"), "qwen3-coder-plus")
+    /// Every tier is shown by the model's real name — never a bare "GPT" or "Claude".
+    func testModelNames() {
+        XCTAssertEqual(AgentModelLabel.name("anthropic/claude-opus-5.5"), "Claude Opus 5.5")
+        XCTAssertEqual(AgentModelLabel.name("anthropic/claude-sonnet-5"), "Claude Sonnet 5")
+        XCTAssertEqual(AgentModelLabel.name("anthropic/claude-haiku-4.5"), "Claude Haiku 4.5")
+        XCTAssertEqual(AgentModelLabel.name("z-ai/glm-5.3"), "GLM-5.3")
+        XCTAssertEqual(AgentModelLabel.name("moonshotai/kimi-k3"), "Kimi K3")
+        XCTAssertEqual(AgentModelLabel.name("openai/gpt-6-sol"), "GPT-6 Sol")
+        XCTAssertEqual(AgentModelLabel.name("openai/gpt-6-luna"), "GPT-6 Luna")
+        // Old usage rows and a future model are named without an app change.
+        XCTAssertEqual(AgentModelLabel.name("openai/gpt-5.6-terra"), "GPT-5.6 Terra")
+        XCTAssertEqual(AgentModelLabel.name("anthropic/claude-opus-6"), "Claude Opus 6")
+        XCTAssertEqual(AgentModelLabel.name("openai/gpt-6-luna:batch"), "GPT-6 Luna")
+        XCTAssertEqual(AgentModelLabel.name("qwen/qwen3.8-flash"), "Qwen3.8 Flash")
     }
 
-    /// The picker's `apiValue` is the wire contract with `resolve_model_slug` on the
-    /// server — a rename on either side silently falls through to the auto router.
+    /// The picker's `apiValue` is the wire contract with the server's tier ids — a rename on
+    /// either side silently falls through to the auto router.
     func testModelChoiceWireValues() {
         XCTAssertNil(AgentModelChoice.auto.apiValue)
         XCTAssertEqual(AgentModelChoice.allCases.compactMap(\.apiValue),
-                       ["opus", "sonnet", "fast", "glm", "kimi", "gpt"])
+                       ["opus", "sonnet", "fast", "glm", "kimi", "gpt", "luna"])
     }
 
-    /// GLM is text-only on OpenRouter, so the composer hides the attach button
-    /// for it; every other tier takes images.
-    func testOnlyGLMHidesImageAttachments() {
-        XCTAssertFalse(AgentModelChoice.glm.supportsImages)
+    @MainActor
+    func testPickerNamesComeFromTheServersModels() throws {
+        let store = AgentStore()
+        // Before the list loads: stock names, and no Luna (an older server wouldn't know it).
+        XCTAssertEqual(store.displayName(for: .gpt), "GPT-6 Sol")
+        XCTAssertFalse(store.availableChoices.contains(.luna))
+        XCTAssertEqual(store.displayName(for: .auto), "Auto")
+
+        let json = #"{"tiers":[{"id":"opus","slug":"anthropic/claude-opus-5.5","images":true},"#
+            + #"{"id":"gpt","slug":"openai/gpt-6-sol","images":true},"#
+            + #"{"id":"luna","slug":"openai/gpt-6-luna","images":true},"#
+            + #"{"id":"glm","slug":"z-ai/glm-5.3","images":false},"#
+            + #"{"id":"future","slug":"x/y","images":true}]}"#
+        struct R: Decodable { let tiers: [AgentModelTier] }
+        let tiers = try JSONDecoder().decode(R.self, from: Data(json.utf8)).tiers
+        store.setServerTiersForTesting(tiers)
+        XCTAssertEqual(store.availableChoices, [.auto, .opus, .gpt, .luna, .glm],
+                       "server order; an id this app doesn't know is skipped, not crashed on")
+        XCTAssertEqual(store.displayName(for: .luna), "GPT-6 Luna")
+        XCTAssertFalse(store.supportsImages(.glm))
+        XCTAssertTrue(store.supportsImages(.luna))
+    }
+
+    /// GLM is text-only on OpenRouter, so without the server's list the composer hides the
+    /// attach button for it; every other tier takes images.
+    func testOnlyGLMHidesImageAttachmentsByDefault() {
+        XCTAssertFalse(AgentModelChoice.glm.supportsImagesByDefault)
         for choice in AgentModelChoice.allCases where choice != .glm {
-            XCTAssertTrue(choice.supportsImages, "\(choice.rawValue) should accept images")
+            XCTAssertTrue(choice.supportsImagesByDefault, "\(choice.rawValue) should accept images")
         }
     }
 
@@ -179,28 +204,19 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(AgentToolLabel.describe("fetch_url"), "Reading a link")
     }
 
-    // E5: the Claude tiers are all multimodal (Fast = Haiku 4.5); the per-tier image
-    // rule now lives in testOnlyGLMHidesImageAttachments, since GLM is text-only.
-    func testClaudeTiersSupportImages() {
-        for choice in [AgentModelChoice.auto, .opus, .sonnet, .fast] {
-            XCTAssertTrue(choice.supportsImages, "\(choice) should accept images")
-        }
-        XCTAssertEqual(AgentModelChoice.fast.detail, "Quick & capable")
-    }
-
     // E2a: the `tool` args and `tool_done` entity fold into the chip (target text + tappability).
     @MainActor
     func testToolChipCarriesDetailAndEntity() throws {
         let store = AgentStore()
         store.transcript = [
-            ChatMessage(role: "user", text: "make saffron milk at 9pm"),
+            ChatMessage(role: "user", text: "water the plants at 9pm"),
             ChatMessage(role: "assistant", text: "", pending: true),
         ]
-        store.apply(try event(#"{"type":"tool","name":"create_assignment","args":{"title":"Make saffron milk"}}"#), assistantIndex: 1)
-        XCTAssertEqual(store.transcript[1].tools.first?.detail, "Make saffron milk")
-        store.apply(try event(#"{"type":"tool_done","name":"create_assignment","entity":{"kind":"assignment","id":40,"label":"Make saffron milk"}}"#), assistantIndex: 1)
+        store.apply(try event(#"{"type":"tool","name":"create_assignment","args":{"title":"Water the plants"}}"#), assistantIndex: 1)
+        XCTAssertEqual(store.transcript[1].tools.first?.detail, "Water the plants")
+        store.apply(try event(#"{"type":"tool_done","name":"create_assignment","entity":{"kind":"assignment","id":40,"label":"Water the plants"}}"#), assistantIndex: 1)
         let chip = store.transcript[1].tools.first
-        XCTAssertEqual(chip?.entity, AgentEntityRef(kind: "assignment", id: 40, label: "Make saffron milk"))
+        XCTAssertEqual(chip?.entity, AgentEntityRef(kind: "assignment", id: 40, label: "Water the plants"))
         XCTAssertTrue(chip?.done == true)
         XCTAssertFalse(chip?.isAwaitingConfirmation == true)   // a create is never a confirm round-trip
     }
@@ -227,7 +243,7 @@ final class AgentTests: XCTestCase {
         XCTAssertTrue(store.transcript[1].tools.first?.isAwaitingConfirmation == true)
 
         // The follow-up (confirmed) delete DOES carry an entity → no longer awaiting.
-        store.transcript[1].tools[0].entity = AgentEntityRef(kind: "assignment", id: 41, label: "saffron milk")
+        store.transcript[1].tools[0].entity = AgentEntityRef(kind: "assignment", id: 41, label: "the plants")
         XCTAssertFalse(store.transcript[1].tools[0].isAwaitingConfirmation)
     }
 

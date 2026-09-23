@@ -13,10 +13,12 @@ _RATES: dict[str, tuple[float, float]] = {
     "anthropic/claude-opus-5.5": (4.0, 20.0),
     "anthropic/claude-haiku-4.5": (1.0, 5.0),
     # Non-Anthropic tiers (OpenRouter list price, 2026-09-22). GLM is the only real
-    # discount here — Kimi K3 is priced above Sonnet, GPT-6 Sol level with it.
+    # discount here — Kimi K3 is priced above Sonnet, GPT-6 Sol level with it, GPT-6 Luna
+    # the cheapest tier of all.
     "z-ai/glm-5.3": (0.56, 1.76),
     "moonshotai/kimi-k3": (3.0, 15.0),
     "openai/gpt-6-sol": (2.0, 10.0),
+    "openai/gpt-6-luna": (0.10, 0.50),
     # Superseded slugs kept so already-recorded usage rows still price correctly.
     "anthropic/claude-opus-5": (5.0, 25.0),
     "z-ai/glm-5.2": (0.70, 2.20),
