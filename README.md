@@ -18,6 +18,8 @@ There is no Command-hosted service: you run the server yourself, whether on hard
 
 **Easiest:** follow the [setup guide](https://legitimateapps.com/command/setup) — one click on Railway (about $5/month), or one command on your own computer. The app walks you through the same steps.
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/command)
+
 **With Docker** (Docker Desktop on a Mac or PC is enough):
 
 ```sh
