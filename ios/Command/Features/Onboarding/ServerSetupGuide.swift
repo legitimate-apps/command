@@ -116,7 +116,7 @@ enum ServerSetupGuide {
         SetupStep(
             index: 1,
             title: "Deploy",
-            detail: "Sign in to Railway and press Deploy. Everything is already set up.",
+            detail: "Sign in to Railway and press Deploy Now. Everything is already set up.",
             link: SetupLink(title: "Open Railway", url: railwayTemplateURL)
         ),
         SetupStep(

@@ -106,7 +106,7 @@ enum AgentHandoff {
         """
         ## Their own server on Railway (about $5/month, paid to Railway)
         1. Open \(ServerSetupGuide.railwayTemplateURL.absoluteString), sign in to Railway and press \
-        Deploy. The template sets up the image, a /data volume and a public domain.
+        Deploy Now. The template sets up the image, a /data volume and a public domain.
         2. When the deploy is green, open the service → Settings → Networking and copy its https:// address.
         3. Check it: <address>/api/health should return JSON with "service": "command".
         4. In the app: "My own server" → "Host it on Railway" → Connect, paste the address, then \
