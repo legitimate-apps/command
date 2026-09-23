@@ -3,12 +3,14 @@
 The webhook (rest/webhooks.py) is the fast path, but a RevenueCat project has ONE webhook URL:
 every other server sharing that project — every self-hosted instance using the published app,
 and Command Cloud beside the operator's own server — never hears about its customers'
-purchases. With `COMMAND_REVENUECAT_API_KEY` (a secret v1 key) set, the entitlement read the
+purchases. With `COMMAND_REVENUECAT_API_KEY` (a v1 key) set, the entitlement read the
 app makes on launch and after a purchase also asks RevenueCat, debounced per account, and
 mirrors the answer into the same local cache the agent gate reads.
 
-API: `GET {revenuecat_api_base}/subscribers/{app_user_id}` with `Authorization: Bearer <secret
-key>` (RevenueCat REST API v1, "Get or Create Customer"). `subscriber.entitlements[<id>]`
+API: `GET {revenuecat_api_base}/subscribers/{app_user_id}` with `Authorization: Bearer <key>`
+(RevenueCat REST API v1, "Get or Create Customer"). It accepts a v1 secret key or the app's
+public SDK key, which is public anyway (it ships in the app) and suffices for this read; v2
+secret keys get 403 code 7723, verified 2026-09-23. `subscriber.entitlements[<id>]`
 carries `expires_date` (null = lifetime), `grace_period_expires_date`, `product_identifier` and
 `purchase_date`; `subscriber.subscriptions[<product>]` adds `period_type`, `store`,
 `unsubscribe_detected_at` and `billing_issues_detected_at`. The endpoint creates an empty
