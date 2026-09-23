@@ -25,12 +25,25 @@ services:
       # over HTTPS (directly or via X-Forwarded-Proto), which suits both a LAN and a proxy.
       COMMAND_COOKIE_SECURE: ${COMMAND_COOKIE_SECURE:-auto}
       COMMAND_LOG_LEVEL: ${COMMAND_LOG_LEVEL:-info}
+      # Your own server (self) or a multi-tenant one (cloud); signup; proxies in front.
+      COMMAND_SERVER_KIND: ${COMMAND_SERVER_KIND:-self}
+      COMMAND_ALLOW_REGISTRATION: ${COMMAND_ALLOW_REGISTRATION:-false}
+      COMMAND_TRUSTED_PROXY_HOPS: ${COMMAND_TRUSTED_PROXY_HOPS:-0}
+      # Operator backups (GET /api/admin/backup). Empty = the endpoint doesn't exist.
+      COMMAND_BACKUP_TOKEN: ${COMMAND_BACKUP_TOKEN:-}
+      # Per-account ceilings (0 = unlimited).
+      COMMAND_MAX_ATTACHMENT_BYTES_PER_ACCOUNT: ${COMMAND_MAX_ATTACHMENT_BYTES_PER_ACCOUNT:-2147483648}
+      COMMAND_MAX_ATTACHMENTS_PER_ACCOUNT: ${COMMAND_MAX_ATTACHMENTS_PER_ACCOUNT:-5000}
+      COMMAND_MAX_NOTES_PER_ACCOUNT: ${COMMAND_MAX_NOTES_PER_ACCOUNT:-100000}
+      COMMAND_MAX_ASSIGNMENTS_PER_ACCOUNT: ${COMMAND_MAX_ASSIGNMENTS_PER_ACCOUNT:-50000}
+      COMMAND_MAX_ACTIVITIES_PER_ACCOUNT: ${COMMAND_MAX_ACTIVITIES_PER_ACCOUNT:-200000}
       # AI note titles. Without a key, titles fall back to the note's first line.
       COMMAND_AI_API_KEY: ${COMMAND_AI_API_KEY:-}
       COMMAND_AI_TITLE_MODEL: ${COMMAND_AI_TITLE_MODEL:-qwen/qwen3.8-flash}
       # Billing. Gating stays off unless you run subscriptions.
       COMMAND_REVENUECAT_WEBHOOK_TOKEN: ${COMMAND_REVENUECAT_WEBHOOK_TOKEN:-}
       COMMAND_AGENT_REQUIRE_SUBSCRIPTION: ${COMMAND_AGENT_REQUIRE_SUBSCRIPTION:-false}
+      COMMAND_REVENUECAT_API_KEY: ${COMMAND_REVENUECAT_API_KEY:-}
       # APNs push reminders. Optional — push is a no-op when the key is absent. The private
       # .p8 is mounted read-only from ./keys (never baked into the image or committed).
       COMMAND_APNS_KEY_PATH: ${COMMAND_APNS_KEY_PATH:-}

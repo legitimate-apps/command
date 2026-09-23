@@ -258,6 +258,10 @@ it's feedback.
   `nextCursor` means end-of-results **[confirmed]**.
 - **Lead-time warnings are advisory** — the server won't stop a too-soon
   assignment; you and the operator are responsible for honoring it.
+- **Per-account ceilings exist** — creating a note, assignment or activity past the
+  server's per-account limit (far above real use; set by the server operator) returns
+  `isError` "This account has reached its limit of N …". Retrying won't help: stop and
+  tell the operator.
 
 ### Empirically confirmed in Phase-3 testing
 
