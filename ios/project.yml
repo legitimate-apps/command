@@ -71,7 +71,7 @@ targets:
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Command uses speech recognition to turn your voice into text for notes and your assistant.
         INFOPLIST_KEY_NSCameraUsageDescription: Command uses the camera so you can attach a photo to a message for the assistant.
         INFOPLIST_KEY_NSFaceIDUsageDescription: Command uses Face ID to confirm it is you before revealing hidden notes and items.
-        CURRENT_PROJECT_VERSION: '67'
+        CURRENT_PROJECT_VERSION: '68'
         MARKETING_VERSION: '1.0'
       # Release/archive signs with manual distribution against the ASC-created
       # "Command CI" profile. Scoped to this target (not the global base / command
@@ -105,7 +105,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: CommandWidgets/CommandWidgets.entitlements
         SKIP_INSTALL: 'YES'
         APPLICATION_EXTENSION_API_ONLY: 'YES'
-        CURRENT_PROJECT_VERSION: '67'
+        CURRENT_PROJECT_VERSION: '68'
         MARKETING_VERSION: '1.0'
       # An embedded extension signs SEPARATELY from its host, with its own App ID and its own
       # profile — the host's "Command CI" profile cannot cover com.legitimateapps.command.widgets.
