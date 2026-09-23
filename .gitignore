@@ -14,7 +14,8 @@ AuthKey_*.p8
 
 # ─── Local agent / tooling artifacts ────────────────────────────────────────
 .claude/
-.playwright-mcp/            # browser screenshots may capture signup/billing forms
+# browser screenshots may capture signup/billing forms
+.playwright-mcp/
 .DS_Store
 *.log
 
@@ -49,15 +50,9 @@ ios/build/
 ios/**/Models/*.mlmodelc/
 ios/**/*.mlpackage/
 
-# Playwright MCP browser snapshots — may contain account PII
-
 # APNs private key mounted into the container (never commit)
 deploy/keys/
 
-# ─── Marketing working files ────────────────────────────────────────────────
-marketing/frames/*.html     # generated per render from compose.py
-marketing/research/*.log     # delegate transcripts
-marketing/raw/PROGRESS*.txt  # pilot beacons
 .coverage
 
 # Maintainer-local notes and agent overlays (never committed)
