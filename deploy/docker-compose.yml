@@ -11,7 +11,7 @@
 #
 # Serving this over the public internet? Put it behind a tunnel or reverse proxy that
 # terminates TLS (Tailscale, Cloudflare Tunnel, Caddy), then set COMMAND_BIND_ADDR=127.0.0.1
-# and COMMAND_COOKIE_SECURE=true so the container is only reachable through the proxy.
+# so the container is only reachable through the proxy.
 services:
   command:
     image: ghcr.io/legitimate-apps/command-server:latest
@@ -21,11 +21,9 @@ services:
       COMMAND_ENVIRONMENT: ${COMMAND_ENVIRONMENT:-prod}
       # Public address, if it has one. Used for absolute links; safe to leave empty on a LAN.
       COMMAND_PUBLIC_BASE_URL: ${COMMAND_PUBLIC_BASE_URL:-}
-      # Whether the session cookie is marked Secure. A Secure cookie is NEVER sent over plain
-      # http, so leaving this on for a LAN deployment lets sign-in appear to succeed and then
-      # fail on the next request. Default off to match the plain-http LAN path the app's setup
-      # guide recommends; turn it ON whenever you actually serve HTTPS.
-      COMMAND_COOKIE_SECURE: ${COMMAND_COOKIE_SECURE:-false}
+      # Session cookie Secure flag. "auto" marks it Secure exactly when the request came in
+      # over HTTPS (directly or via X-Forwarded-Proto), which suits both a LAN and a proxy.
+      COMMAND_COOKIE_SECURE: ${COMMAND_COOKIE_SECURE:-auto}
       COMMAND_LOG_LEVEL: ${COMMAND_LOG_LEVEL:-info}
       # AI note titles. Without a key, titles fall back to the note's first line.
       COMMAND_AI_API_KEY: ${COMMAND_AI_API_KEY:-}

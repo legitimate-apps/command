@@ -27,7 +27,7 @@ docker run -d --name command --restart unless-stopped -p 9071:8000 \
 
 Then enter `http://<this computer's address>:9071` in the app. Your data lives in the `command-data` volume; keep a volume at `/data` on any other platform too.
 
-**With Compose:** [`deploy/docker-compose.yml`](deploy/docker-compose.yml) and [`deploy/.env.example`](deploy/.env.example) (also attached to each [release](https://github.com/legitimate-apps/command/releases)) cover HTTPS, push notifications and the assistant. Behind a TLS proxy or tunnel, set `COMMAND_COOKIE_SECURE=true` and `COMMAND_BIND_ADDR=127.0.0.1`.
+**With Compose:** [`deploy/docker-compose.yml`](deploy/docker-compose.yml) and [`deploy/.env.example`](deploy/.env.example) (also attached to each [release](https://github.com/legitimate-apps/command/releases)) cover HTTPS, push notifications and the assistant. Behind a TLS proxy or tunnel on the same machine, set `COMMAND_BIND_ADDR=127.0.0.1`.
 
 ## Current limits
 

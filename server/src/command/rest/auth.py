@@ -83,12 +83,17 @@ class TimezoneOut(BaseModel):
     timezone: str
 
 
-def _set_session_cookie(response: Response, settings: Settings, raw: str) -> None:
-    cookies.set_session_cookie(response, settings, raw)
+def _set_session_cookie(
+    request: Request, response: Response, settings: Settings, raw: str
+) -> None:
+    secure = cookies.cookie_is_secure(settings, request.scope)
+    cookies.set_session_cookie(response, settings, raw, secure=secure)
 
 
 @router.post("/auth/register", response_model=AccountOut)
-def register(body: RegisterIn, response: Response, settings: Config, conn: Db) -> AccountOut:
+def register(
+    body: RegisterIn, request: Request, response: Response, settings: Config, conn: Db
+) -> AccountOut:
     # First-user-only by default. The instance belongs to whoever claims it; after that the door
     # is shut unless the operator reopens it with COMMAND_ALLOW_REGISTRATION=true. Without this,
     # a self-hosted server on a public hostname lets any passer-by create an account and spend
@@ -103,12 +108,14 @@ def register(body: RegisterIn, response: Response, settings: Config, conn: Db) -
         conn, body.username, body.password, body.display_name, token_words=settings.token_words
     )
     raw, _ = accounts_core.create_session(conn, account.id, days=settings.session_days)
-    _set_session_cookie(response, settings, raw)
+    _set_session_cookie(request, response, settings, raw)
     return AccountOut(**account.model_dump())
 
 
 @router.post("/auth/login", response_model=AccountOut)
-def login(body: LoginIn, response: Response, settings: Config, conn: Db) -> AccountOut:
+def login(
+    body: LoginIn, request: Request, response: Response, settings: Config, conn: Db
+) -> AccountOut:
     key = body.username.strip().lower()
     if not _login_limiter.allowed(key):
         raise RateLimited(
@@ -121,12 +128,14 @@ def login(body: LoginIn, response: Response, settings: Config, conn: Db) -> Acco
         raise
     _login_limiter.reset(key)
     raw, _ = accounts_core.create_session(conn, account.id, days=settings.session_days)
-    _set_session_cookie(response, settings, raw)
+    _set_session_cookie(request, response, settings, raw)
     return AccountOut(**account.model_dump())
 
 
 @router.post("/auth/invite", response_model=InviteOut)
-def redeem_invite(body: InviteIn, response: Response, settings: Config, conn: Db) -> InviteOut:
+def redeem_invite(
+    body: InviteIn, request: Request, response: Response, settings: Config, conn: Db
+) -> InviteOut:
     key = body.token.strip()
     if not _invite_limiter.allowed(key) or not _invite_global_limiter.allowed(_INVITE_GLOBAL_KEY):
         raise RateLimited("Too many failed invite attempts. Please wait a few minutes and try again.")
@@ -141,7 +150,7 @@ def redeem_invite(body: InviteIn, response: Response, settings: Config, conn: Db
     # A successful redemption clears the global bucket too, so a burst of typos from real
     # people cannot strand the next legitimate delegatee.
     _invite_global_limiter.reset(_INVITE_GLOBAL_KEY)
-    _set_session_cookie(response, settings, session.raw_token)
+    _set_session_cookie(request, response, settings, session.raw_token)
     return InviteOut(
         delegatee_id=session.delegatee.id,
         delegatee_name=session.delegatee.name,

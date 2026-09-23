@@ -12,7 +12,7 @@ import secrets
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -62,7 +62,11 @@ class Settings(BaseSettings):
     # registration creates the owner and the door closes behind it; set this true to reopen it
     # deliberately (adding a second person, or re-running onboarding).
     allow_registration: bool = False
-    cookie_secure: bool = True
+    # Secure session cookie. Unset/"auto": Secure exactly when the request arrived over HTTPS
+    # (directly or per X-Forwarded-Proto), so one image works on a plain-http LAN and behind
+    # a TLS proxy. A Secure cookie is never sent over http, which on a LAN would make sign-in
+    # appear to work and then fail on the next request. true/false force it.
+    cookie_secure: bool | None = None
     cookie_name: str = "command_session"
     # Login brute-force guard (per-username sliding window): lock out after
     # `login_max_attempts` failures within `login_window_seconds`.
@@ -157,6 +161,13 @@ class Settings(BaseSettings):
     # Comma-separated hostnames the peer fetcher may reach over plain http /
     # private ranges — DEV/E2E ONLY (e.g. "10.0.0.5"). MUST stay empty in prod.
     peer_allow_http_hosts: str = ""
+
+    @field_validator("cookie_secure", mode="before")
+    @classmethod
+    def _auto_cookie_secure(cls, value: object) -> object:
+        if isinstance(value, str) and value.strip().lower() in ("", "auto"):
+            return None
+        return value
 
     @property
     def is_prod(self) -> bool:

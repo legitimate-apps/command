@@ -43,7 +43,7 @@ class SessionRefreshMiddleware:
                 token = state.pop(SESSION_REFRESH_KEY, None)
                 if token:
                     MutableHeaders(scope=message).append(
-                        "set-cookie", session_cookie_header(self.settings, token)
+                        "set-cookie", session_cookie_header(self.settings, token, scope)
                     )
             await send(message)
 
