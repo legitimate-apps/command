@@ -39,7 +39,7 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     COMMAND_HTTP_HOST=0.0.0.0 \
     COMMAND_ENVIRONMENT=prod
 
-USER command
+COPY docker/entrypoint.sh /usr/local/bin/command-entrypoint
 WORKDIR /home/command
 VOLUME ["/data"]
 EXPOSE 8000
@@ -48,5 +48,6 @@ LABEL org.opencontainers.image.source="https://github.com/legitimate-apps/comman
       org.opencontainers.image.description="Command planner backend: REST API + MCP over SQLite" \
       org.opencontainers.image.licenses="MIT"
 
-# Runs uvicorn (single worker) serving both the REST API and the mounted MCP app.
-ENTRYPOINT ["command-server"]
+# Fixes /data ownership if needed, drops to `command`, then runs uvicorn (single worker)
+# serving both the REST API and the mounted MCP app.
+ENTRYPOINT ["command-entrypoint"]

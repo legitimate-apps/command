@@ -1,6 +1,6 @@
 [project]
 name = "command-server"
-version = "1.0.1"
+version = "1.0.2"
 description = "Lean self-hosted backend for Command: a REST API for the iOS app and an MCP server for agents, over one SQLite store."
 readme = "README.md"
 requires-python = ">=3.12"
