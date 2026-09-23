@@ -193,6 +193,19 @@ final class APIClient {
         try await postJSON("/api/access-token/regenerate", Empty()).decoded(AccessTokenResponse.self).accessToken
     }
 
+    // MARK: Server
+
+    /// Public server description (no auth). Older servers 404 — callers treat any failure as
+    /// "unknown" and fall back to the pre-Cloud behaviour.
+    func serverInfo() async throws -> ServerInfo { try await get("/api/server/info").decoded() }
+
+    /// Store the assistant's model key on a self-hosted server. Owner only; the server validates
+    /// it against the provider first and answers `invalid_key`, `not_owner` or `managed_by_env`
+    /// with an actionable message otherwise. The key is never returned by any endpoint.
+    func setServerAIKey(_ apiKey: String) async throws {
+        _ = try await putJSON("/api/server/ai-key", AIKeyBody(apiKey: apiKey))
+    }
+
     // MARK: Calendar export
 
     func calendarSubscription() async throws -> CalendarSubscription {
@@ -722,6 +735,7 @@ final class APIClient {
     private struct PushTokenBody: Encodable { let token: String }
     private struct RegisterBody: Encodable { let username: String; let password: String; let displayName: String? }
     private struct TimezoneBody: Encodable { let timezone: String }
+    private struct AIKeyBody: Encodable { let apiKey: String }
     private struct LoginBody: Encodable { let username: String; let password: String }
     private struct InviteBody: Encodable { let token: String }
     private struct NoteCreateBody: Encodable { let body: String; let source: String; let engine: String?; let locale: String?; let title: String?; let hidden: Bool }

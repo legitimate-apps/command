@@ -12,11 +12,19 @@ struct AuthView: View {
     @State private var password = ""
     @State private var displayName = ""
     @State private var busy = false
-    @State private var showServer = false
+    @State private var showSwitch = false
     @State private var showInvite = false
+    /// Once the person flips Sign in / Create account themselves, server info no longer does.
+    @State private var userChoseMode = false
     @FocusState private var focus: Field?
 
     private enum Field { case username, displayName, password }
+
+    private var canCreate: Bool { SetupFlow.canCreateAccount(info: app.serverInfo) }
+    private var isCloud: Bool { SetupFlow.isCloud(info: app.serverInfo, serverURL: app.serverURLString) }
+    private var serverLabel: String {
+        SetupFlow.serverLabel(info: app.serverInfo, serverURL: app.serverURLString)
+    }
 
     /// Sign-in needs a username + any password; registration enforces the 8-char
     /// floor up front so the disabled state is explained by the inline hint below.
@@ -30,8 +38,9 @@ struct AuthView: View {
             Palette.paper.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                Spacer(minLength: 24)
-                brandMark
+                topBar
+                Spacer(minLength: 16)
+                BrandMark()
                 Text("Command")
                     .font(Typeface.display(40))
                     .foregroundStyle(Palette.ink)
@@ -98,15 +107,26 @@ struct AuthView: View {
 
                 primaryButton.padding(.top, 20)
 
-                Button {
-                    withAnimation(.easeOut(duration: 0.18)) { app.lastError = nil; isRegister.toggle() }
-                } label: {
-                    Text(isRegister ? "Have an account? Sign in" : "New here? Create an account")
-                        .font(Typeface.body(14, .medium))
-                        .foregroundStyle(Palette.accent)
+                if canCreate {
+                    Button {
+                        userChoseMode = true
+                        withAnimation(.easeOut(duration: 0.18)) { app.lastError = nil; isRegister.toggle() }
+                    } label: {
+                        Text(isRegister ? "Have an account? Sign in" : "New here? Create an account")
+                            .font(Typeface.body(14, .medium))
+                            .foregroundStyle(Palette.accent)
+                            .frame(minHeight: 36)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 12)
+                } else {
+                    // A self-hosted server closes sign-up once its owner exists.
+                    Text("Sign-up is closed on this server. Ask its owner for an invite.")
+                        .font(Typeface.body(13))
+                        .foregroundStyle(Palette.inkSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 16)
                 }
-                .buttonStyle(.plain)
-                .padding(.top, 16)
 
                 Button {
                     app.lastError = nil
@@ -120,45 +140,74 @@ struct AuthView: View {
                 .padding(.top, 10)
 
                 Spacer(minLength: 24)
-
-                Button { showServer = true } label: {
-                    Label("Server settings", systemImage: "gearshape")
-                        .font(Typeface.body(12))
-                        .foregroundStyle(Palette.inkSecondary.opacity(0.8))
-                }
-                .buttonStyle(.plain)
-                .padding(.bottom, 8)
             }
             .frame(maxWidth: 380)
             .padding(.horizontal, 28)
+            .padding(.top, 12)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.easeOut(duration: 0.18), value: isRegister)
             .animation(.easeOut(duration: 0.18), value: showPasswordHint)
         }
-        .sheet(isPresented: $showServer) { ServerURLSheet().macSheet() }
+        // "Change server" is the onboarding choice screen, not a bare URL field: the same two
+        // roads (Cloud or your own), the same guide.
+        .sheet(isPresented: $showSwitch) {
+            OnboardingView(start: .switchServer, onCancel: { showSwitch = false }).macSheet(.page)
+        }
         .sheet(isPresented: $showInvite) { InviteRedeemSheet().macSheet() }
         // A command://invite/<token> deep link parks its token on AppState; open the redeem
         // sheet for it whether the app was already on this screen or is just arriving here.
-        .onAppear { if app.pendingInviteToken != nil { showInvite = true } }
+        .onAppear {
+            if app.pendingInviteToken != nil { showInvite = true }
+            applyDefaultMode()
+        }
         .onChange(of: app.pendingInviteToken) { _, token in
             if token != nil { app.lastError = nil; showInvite = true } }
-        #if DEBUG
-        // Screenshot hook: `-COMMAND_PREVIEW_SERVER_SHEET YES` opens the server sheet.
-        .onAppear { if UserDefaults.standard.bool(forKey: "COMMAND_PREVIEW_SERVER_SHEET") { showServer = true } }
-        #endif
+        .onChange(of: app.serverInfo) { _, _ in applyDefaultMode() }
+        .task { await app.refreshServerInfo() }
+    }
+
+    /// Open on "Create account" for a brand-new person, "Sign in" otherwise; never offer
+    /// "Create account" where the server has closed sign-up.
+    private func applyDefaultMode() {
+        if !canCreate { isRegister = false; return }
+        guard !userChoseMode else { return }
+        isRegister = SetupFlow.startsOnCreateAccount(info: app.serverInfo, justChoseServer: app.justChoseServer)
     }
 
     // MARK: - Pieces
 
-    private var brandMark: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Palette.accentSoft)
-                .frame(width: 80, height: 80)
-            Image(systemName: "calendar.badge.clock")
-                .font(.system(size: 38, weight: .medium))
-                .foregroundStyle(Palette.accent)
-                .accessibilityHidden(true)
+    /// Which server this account lives on (tap to change it), and the agent hand-off.
+    private var topBar: some View {
+        HStack(spacing: 12) {
+            Button { showSwitch = true } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isCloud ? "cloud" : "server.rack")
+                        .font(.system(size: 12, weight: .semibold))
+                        .accessibilityHidden(true)
+                    Text(serverLabel)
+                        .font(Typeface.body(13, .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .accessibilityHidden(true)
+                }
+                .foregroundStyle(Palette.inkSecondary)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 32)
+                .background(Palette.surface, in: Capsule())
+                .overlay(Capsule().strokeBorder(Palette.hairline))
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .layoutPriority(1)
+            .accessibilityLabel("Server: \(serverLabel)")
+            .accessibilityHint("Change server")
+            Spacer(minLength: 0)
+            HandoffButton(path: SetupFlow.handoffPath(info: app.serverInfo,
+                                                      serverURL: app.serverURLString,
+                                                      chosen: app.chosenHosting))
         }
     }
 

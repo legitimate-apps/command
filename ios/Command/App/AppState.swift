@@ -96,6 +96,17 @@ final class AppState {
     private(set) var entitlement: AgentEntitlement?
     private(set) var client: APIClient
     private(set) var serverURLString: String
+    /// `GET /api/server/info` for the current server; nil while unknown, and on a server too
+    /// old to have the endpoint (everything then behaves exactly as it did before Cloud).
+    private(set) var serverInfo: ServerInfo?
+    /// The post-sign-in setup step on screen ("Add your AI key", "You're set"), or nil for the app.
+    private(set) var setupStage: SetupStage?
+    /// What the person picked in onboarding (nil = Command Cloud or not chosen here). Tailors
+    /// the agent hand-off brief on the screens after the choice.
+    private(set) var chosenHosting: ServerHostingOption?
+    /// Set when the server was chosen in onboarding just now, so the account screen can open on
+    /// "Create account" for a brand-new person. Cleared on sign-in.
+    private(set) var justChoseServer = false
     /// How hidden (invisible-ink) captures display, app-wide — a local presentation
     /// choice set in the profile, persisted like the server URL.
     var hiddenRevealMode: HiddenRevealMode {
@@ -371,7 +382,8 @@ final class AppState {
         let defaults = UserDefaults.standard
         if let user = defaults.string(forKey: "COMMAND_AUTOLOGIN_USER"),
            let pass = defaults.string(forKey: "COMMAND_AUTOLOGIN_PASS") {
-            await login(username: user, password: pass)
+            // No setup steps: these launches exist to land on the app for screenshots.
+            await login(username: user, password: pass, offerSetup: false)
             if phase == .signedIn { return }
         }
         #endif
@@ -381,13 +393,17 @@ final class AppState {
         phase = .signedOut
     }
 
-    func login(username: String, password: String) async {
+    /// `offerSetup`: continue into the post-sign-in setup steps ("Add your AI key" where it
+    /// applies, then the one-time "You're set" tutorial). Only an interactive sign-in does;
+    /// a resumed session (bootstrap) goes straight to the app.
+    func login(username: String, password: String, offerSetup: Bool = true) async {
         await run {
             self.account = try await self.client.login(username: username, password: password)
             self.myProfile = nil
             self.setSessionMode(.operatorAccount)
             await self.onSignedIn()
             self.lock.configure(accountId: self.account?.id, lockNow: false)  // just authenticated
+            if offerSetup { await self.beginSetup() }
             self.phase = .signedIn
         }
     }
@@ -401,9 +417,121 @@ final class AppState {
             self.setSessionMode(.operatorAccount)
             await self.onSignedIn()
             self.lock.configure(accountId: self.account?.id, lockNow: false)
+            await self.beginSetup()
             self.phase = .signedIn
         }
     }
+
+    // MARK: - Server info + guided setup
+
+    /// Re-read `GET /api/server/info`. Any failure (a 404 from an older server, a network blip)
+    /// leaves it nil, which every caller treats as "behave as before Cloud".
+    func refreshServerInfo() async {
+        #if DEBUG
+        if Self.onboardingPreviewActive { return }   // keep the stubbed info the preview set
+        #endif
+        guard hasServer else { serverInfo = nil; return }
+        let requested = serverURLString
+        let info = try? await client.serverInfo()
+        guard requested == serverURLString else { return }   // the server changed meanwhile
+        serverInfo = info
+    }
+
+    /// Pick the first post-sign-in step from fresh server info (see `SetupFlow.firstStage`).
+    private func beginSetup() async {
+        await refreshServerInfo()
+        justChoseServer = false
+        setupStage = SetupFlow.firstStage(
+            info: serverInfo,
+            aiKeySkipped: UserDefaults.standard.bool(forKey: SetupFlow.aiKeySkippedKey(for: serverURLString)),
+            tutorialSeen: UserDefaults.standard.bool(forKey: SetupFlow.tutorialSeenKey))
+    }
+
+    /// "Skip" on the AI-key step: remember it for this server and move on.
+    func skipAIKey() {
+        UserDefaults.standard.set(true, forKey: SetupFlow.aiKeySkippedKey(for: serverURLString))
+        advanceSetup(from: .aiKey)
+    }
+
+    /// Outcome of saving the assistant key, for the AI-key screen.
+    enum AIKeyResult: Equatable {
+        case saved
+        /// This account isn't the server's owner (or the key is managed by env): the step goes away.
+        case notApplicable
+        /// The server's own actionable message (e.g. an invalid key).
+        case failed(String)
+    }
+
+    /// PUT the key; on success refresh the server info so labels and the tutorial are current.
+    func saveAIKey(_ raw: String) async -> AIKeyResult {
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return .failed("Paste your OpenRouter key first.") }
+        do {
+            try await client.setServerAIKey(key)
+            await refreshServerInfo()
+            await refreshEntitlement()
+            return .saved
+        } catch APIError.http(let status, let code, let message) {
+            if code == "not_owner" || code == "managed_by_env" {
+                return .notApplicable
+            }
+            if status == 404 {
+                return .failed("This server can't take a key from the app yet. Set COMMAND_AI_API_KEY on the server instead.")
+            }
+            return .failed(message ?? "The server refused the key (HTTP \(status)).")
+        } catch {
+            return .failed("Couldn't reach your server. Check your connection and try again.")
+        }
+    }
+
+    /// Move past `stage` (saved, skipped or not applicable).
+    func advanceSetup(from stage: SetupStage) {
+        setupStage = SetupFlow.stage(
+            after: stage, tutorialSeen: UserDefaults.standard.bool(forKey: SetupFlow.tutorialSeenKey))
+    }
+
+    /// Close the tutorial (for good) and, if a card's action was tapped, land there in the app.
+    func finishSetup(then action: TutorialCard.Action? = nil) {
+        UserDefaults.standard.set(true, forKey: SetupFlow.tutorialSeenKey)
+        setupStage = nil
+        // Sticky: the shell isn't in the tree yet, and drains this on its first appearance.
+        if let action { ShortcutNavigation.shared.route(action.intent) }
+    }
+
+    /// Account → "Setup & tutorial" / "Assistant AI key": show that step again.
+    func reopenSetup(_ stage: SetupStage) {
+        guard phase == .signedIn, sessionMode == .operatorAccount else { return }
+        setupStage = stage
+    }
+
+    /// Onboarding's commit: remember what was chosen (for the hand-off brief and the account
+    /// screen's default), then point the app at the server.
+    func chooseServer(_ url: URL, hosting: ServerHostingOption?) async {
+        chosenHosting = hosting
+        justChoseServer = true
+        await setServerURL(url.absoluteString)
+    }
+
+    #if DEBUG
+    /// `-COMMAND_ONBOARDING_STEP …` launches render a setup screen with stubbed state and no
+    /// network (see OnboardingPreviewHost). Server-info refreshes are suppressed so the stub holds.
+    static var onboardingPreviewActive: Bool {
+        UserDefaults.standard.string(forKey: "COMMAND_ONBOARDING_STEP") != nil
+    }
+
+    func applyOnboardingPreview(info: ServerInfo?, serverURL: String, stage: SetupStage?,
+                                hosting: ServerHostingOption?, justChose: Bool) {
+        serverInfo = info
+        serverURLString = serverURL
+        setupStage = stage
+        chosenHosting = hosting
+        justChoseServer = justChose
+        entitlement = AgentEntitlement(
+            active: false, requiresSubscription: info?.isCloud ?? false, productId: "command_pro_monthly",
+            priceDisplay: "$19.99/mo", trialDays: 7, consentGiven: false, status: "none",
+            periodType: nil, expiresAt: nil, willRenew: false)
+    }
+    #endif
 
     /// Handle command://invite/<token>. Only a signed-out app acts on it: redeeming inside a
     /// live operator session would silently swap the whole app to a delegatee session. The
@@ -651,6 +779,7 @@ final class AppState {
         lock.reset()
         account = nil
         myProfile = nil
+        setupStage = nil
         clearPersistedSessionMode()
         UserDefaults.standard.removeObject(forKey: Self.manualTimezoneKey)   // it was that account's choice
         entitlement = nil
@@ -819,12 +948,16 @@ final class AppState {
         if trimmed != serverURLString, phase == .signedIn || phase == .unreachable {
             await logout()
         }
+        if trimmed != serverURLString { serverInfo = nil }   // it described the old server
         serverURLString = trimmed
         UserDefaults.standard.set(trimmed, forKey: Self.urlKey)
         client = APIClient(baseURL: url)
         installClientHooks()
         phase = .loading
         await bootstrap()
+        // Label the server and gate "Create account" on the sign-in screen. Off the critical
+        // path: the screen renders at once and adjusts when this lands (or never, on an older server).
+        Task { await refreshServerInfo() }
     }
 
     private func run(_ work: @escaping () async throws -> Void) async {

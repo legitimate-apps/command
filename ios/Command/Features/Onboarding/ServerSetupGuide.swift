@@ -2,20 +2,20 @@
 //  ServerSetupGuide.swift
 //  Command
 //
-//  What a new person needs to know before the app can do anything: Command talks to a server
-//  that they run, and there is no default one. That is a deliberate product decision, not an
-//  omission — their notes, their plans and their assistant conversations live on a machine they
-//  control, and the app never phones anywhere else.
-//
-//  It is also, unavoidably, a wall in front of a brand-new App Store user. So this file holds
-//  the actual instructions rather than a link to a docs site: the hosting choices, the real
-//  commands, and what "done" looks like. Kept as pure data + pure functions so the content and
-//  the URL handling are unit-testable and the view stays a rendering of them.
+//  What a new person needs to know before the app can do anything: Command talks to a server.
+//  Most people pick Command Cloud (hosted by Legitimate LLC; free, with Command Pro unlocking
+//  the assistant there). Self-hosting stays a first-class choice — Railway, Docker on a computer
+//  they own, or an address they already have — and this file holds the actual instructions for
+//  it rather than a link to a docs site: the hosting choices, the real commands, and what "done"
+//  looks like. Kept as pure data + pure functions so the content and the URL handling are
+//  unit-testable and the views stay a rendering of them.
 //
 
 import Foundation
 
-/// A way to get a Command server, in the order most people should consider them.
+/// A way to run your OWN Command server — the "My own server" branch of onboarding — in the
+/// order most people should consider them. Command Cloud is not one of these: it is the default
+/// path and needs no hosting at all.
 enum ServerHostingOption: String, CaseIterable, Identifiable, Sendable {
     /// Managed hosting. Costs a few dollars a month; needs no hardware and no networking.
     case railway
@@ -28,24 +28,24 @@ enum ServerHostingOption: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .railway:    return "Host it for me"
-        case .selfHosted: return "Run it on my own machine"
-        case .existing:   return "I already have a server"
+        case .railway:    return "Host it on Railway"
+        case .selfHosted: return "Run it on my computer"
+        case .existing:   return "I have an address"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .railway:    return "A few minutes on Railway. Around $5/month."
+        case .railway:    return "A few minutes. About $5/month, paid to Railway."
         case .selfHosted: return "Docker on a Mac or PC you own. Free."
-        case .existing:   return "Enter its address and sign in."
+        case .existing:   return "A server you or someone else already runs."
         }
     }
 
     var systemImage: String {
         switch self {
-        case .railway:    return "cloud"
-        case .selfHosted: return "internaldrive"
+        case .railway:    return "globe"
+        case .selfHosted: return "desktopcomputer"
         case .existing:   return "link"
         }
     }
@@ -54,11 +54,9 @@ enum ServerHostingOption: String, CaseIterable, Identifiable, Sendable {
     var tradeoff: String? {
         switch self {
         case .railway:
-            return "Easiest, and reachable from anywhere. You pay Railway directly; "
-                 + "Command takes no cut and never sees your data."
+            return "Reachable from anywhere. Command takes no cut and never sees your data."
         case .selfHosted:
-            return "Free and completely private, but your phone can only reach it from home "
-                 + "unless you add a tunnel (Tailscale or Cloudflare Tunnel)."
+            return "Completely private. Reachable from home unless you add Tailscale or a tunnel."
         case .existing:
             return nil
         }
@@ -85,13 +83,20 @@ struct SetupLink: Equatable, Sendable {
 }
 
 enum ServerSetupGuide {
+    /// Command Cloud — the hosted, multi-tenant server. The ONE place this address lives; every
+    /// screen, label and agent brief reads it from here.
+    static let cloudURL = URL(string: "https://cloud.legitimateapps.com")!
     /// The server's source. Public, MIT-licensed.
     static let repositoryURL = URL(string: "https://github.com/legitimate-apps/command")!
     /// The same instructions on the web, with pictures, for doing this on a computer.
     static let helpURL = URL(string: "https://legitimateapps.com/command/setup")!
+    /// The plain-text brief for an AI agent — the web twin of `AgentHandoff.instructions`.
+    static let agentBriefURL = URL(string: "https://legitimateapps.com/command/setup/agent.txt")!
     /// Where "Open Railway" goes: the one-click template (the published image, a /data volume
-    /// and a public domain), reached through the web guide's Railway section.
-    static let railwayTemplateURL = URL(string: "https://legitimateapps.com/command/setup#railway")!
+    /// and a public domain).
+    static let railwayTemplateURL = URL(string: "https://railway.com/deploy/command")!
+    /// Where someone creates an OpenRouter key for their own server's assistant.
+    static let openRouterKeysURL = URL(string: "https://openrouter.ai/keys")!
     static let dockerDesktopURL = URL(string: "https://www.docker.com/products/docker-desktop/")!
 
     /// Pulls the published image and keeps it running across restarts; data lives in a volume.

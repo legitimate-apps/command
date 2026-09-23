@@ -25,6 +25,11 @@ struct RootView: View {
         if UserDefaults.standard.bool(forKey: "COMMAND_PRIVACY_PREVIEW") {
             return AnyView(PrivacyChallengePreview())
         }
+        // Setup screens with stubbed state — the launch arguments are documented in
+        // OnboardingPreviewHost.swift (`-COMMAND_ONBOARDING_STEP welcome|cloud|…|ready|handoff`).
+        if let step = UserDefaults.standard.string(forKey: "COMMAND_ONBOARDING_STEP") {
+            return AnyView(OnboardingPreviewHost(step: step).dynamicTypeSize(...DynamicTypeSize.accessibility2))
+        }
         #endif
         // Honor Dynamic Type (the display/body Typeface helpers scale with it), but cap the
         // upper end so the largest accessibility sizes enlarge text without breaking the
@@ -47,6 +52,9 @@ struct RootView: View {
         case .signedIn:
             if app.sessionMode == .delegatee {
                 MyWorkView()
+            } else if app.setupStage != nil {
+                // Just signed in: "Add your AI key" where it applies, then "You're set".
+                SetupContinuationView()
             } else {
                 AdaptiveRootView()
             }

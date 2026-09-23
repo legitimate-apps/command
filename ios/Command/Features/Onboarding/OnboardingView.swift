@@ -4,33 +4,51 @@
 //
 //  The first thing a new person sees, and the only screen that has to justify itself.
 //
-//  Command has no default server: your notes, your plans and your assistant conversations live
-//  on a machine you control. That is the product's whole point, and it is also a wall in front
-//  of someone who just downloaded an app and expected a text field. So this flow does the
-//  explaining — what the app is, why there is a setup step at all, the real hosting options
-//  with their honest trade-offs, and the actual commands — instead of linking out to a docs
-//  site the moment it gets hard.
+//  Two roads, chosen on the welcome page: **Command Cloud** — free, nothing to run, the default
+//  for almost everyone — or **My own server**, where the existing self-host guide lives (Railway,
+//  Docker on a computer they own, or an address they already have). Every screen carries a
+//  "Hand to AI" button in its top bar that copies the complete setup instructions for an agent.
 //
 //  It reads as a page from the planner itself: ink on paper, one accent, and — down the setup
 //  steps — a numbered rail you tick off as you work, the way you'd check a list printed in
 //  the margin. Panes turn like pages: a single short drift-and-fade in the direction of
 //  travel, skipped entirely under Reduce Motion. Content and URL logic live in
-//  `ServerSetupGuide`; this file only renders them.
+//  `ServerSetupGuide`, `SetupFlow` and `AgentHandoff`; this file only renders them.
+//
+//  The same view, started at `.switchServer`, is Account → Server → "Switch server" (and the
+//  sign-in screen's "Change server"), so there is one choice screen, not two.
 //
 
 import SwiftUI
+
+/// Where the onboarding flow can be. Public so the DEBUG preview harness can start anywhere.
+enum OnboardingStep: Hashable {
+    case welcome
+    /// The choice again, from Account or the sign-in screen: same cards, a Cancel instead of the pitch.
+    case switchServer
+    case cloud
+    case selfHost
+    case guide(ServerHostingOption)
+    case connect(ServerHostingOption)
+}
 
 struct OnboardingView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
-    private enum Step: Hashable { case intro, why, choose, guide(ServerHostingOption), connect }
+    /// The first pane. `.welcome` for a fresh install, `.switchServer` when changing servers.
+    var start: OnboardingStep = .welcome
+    /// Present when shown as a sheet: the root pane's Back becomes "Cancel".
+    var onCancel: (() -> Void)?
 
-    @State private var step: Step = .intro
-    @State private var chosen: ServerHostingOption?
+    @State private var step: OnboardingStep?
     @State private var forward = true
 
-    private func go(_ next: Step, advancing: Bool = true) {
+    private var current: OnboardingStep { step ?? start }
+    /// The pane Back returns to from the first level of either branch.
+    private var root: OnboardingStep { start == .switchServer ? .switchServer : .welcome }
+
+    private func go(_ next: OnboardingStep, advancing: Bool = true) {
         forward = advancing
         step = next
     }
@@ -38,19 +56,23 @@ struct OnboardingView: View {
     var body: some View {
         ZStack {
             Palette.paper.ignoresSafeArea()
-            if step == .intro {
+            if current == .welcome {
                 embossBackdrop
                     .transition(reduceMotion ? .identity : backdropTurn)
             }
             ZStack {
                 pane
-                    .id(step)
+                    .id(current)
                     .transition(reduceMotion ? .identity : pageTurn)
             }
             .frame(maxWidth: 560)
-            .padding(28)
+            .padding(.horizontal, 28)
+            .padding(.top, 12)
+            .padding(.bottom, 24)
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: step)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: current)
+        // Someone choosing a server isn't describing the one the app points at now.
+        .environment(\.handoffServerURL, "")
     }
 
     /// The page turn: the incoming pane drifts in from the direction of travel while the
@@ -70,13 +92,12 @@ struct OnboardingView: View {
     /// — that differential is what reads as depth. The 1.1 overscan keeps the drift from ever
     /// exposing an edge (14pt < the ~16pt minimum overscan at the narrowest window).
     ///
-    /// The asset carries relief across its full height — its strongest band lands squarely on
-    /// the value rows and read as strikethroughs — so "rings stay clear of text" is enforced
-    /// here, structurally: two falloff masks multiply the image alpha. `arcField` holds the
-    /// impression around the arc signature, `copyFloor` dissolves it to nothing before the copy.
+    /// Two falloff masks multiply the image alpha so the relief never crosses a glyph:
+    /// `arcField` holds the impression around the arc signature, `copyFloor` dissolves it to
+    /// nothing before the copy.
     private var embossBackdrop: some View {
         Rectangle()
-            .fill(embossTint)
+            .fill(Palette.ink)
             .mask {
                 Image("EmbossBackdrop")
                     .resizable()
@@ -91,11 +112,9 @@ struct OnboardingView: View {
             .accessibilityHidden(true)
     }
 
-    /// First falloff: a radial held at full strength around the upper trailing area — where the
-    /// asset's arc signature actually lives (its centre of mass is ~(0.80, 0.22), not the empty
-    /// corner) — dissolving toward the lower leading corner so the impression reads as pressed
-    /// into the open paper rather than printed edge to edge. The radius scales with the window,
-    /// so the hold survives Mac window resizing.
+    /// A radial held at full strength around the upper trailing area — where the asset's arc
+    /// signature lives (centre of mass ~(0.80, 0.22)) — dissolving toward the lower leading
+    /// corner. The radius scales with the window, so the hold survives Mac window resizing.
     private var arcField: some View {
         GeometryReader { geo in
             Rectangle().fill(
@@ -113,31 +132,21 @@ struct OnboardingView: View {
         }
     }
 
-    /// Second falloff, and the one that keeps the copy clean: full strength through the open
-    /// upper area, then dissolving to NOTHING by 47% of the height — across the whole width,
-    /// so no relief line can cross a glyph in the value rows, their sub-lines or the card,
-    /// however wide the widest line runs. (The wordmark sits just above the fade and keeps at
-    /// most the faintest arc behind it.)
+    /// Full strength through the open upper area, dissolving to NOTHING by 36% of the height —
+    /// across the whole width — so no relief line can cross the wordmark, the value lines or the
+    /// choice cards below it.
     private var copyFloor: some View {
         Rectangle().fill(
             LinearGradient(
                 stops: [
                     .init(color: .white, location: 0),
-                    .init(color: .white, location: 0.34),
-                    .init(color: .clear, location: 0.47)
+                    .init(color: .white, location: 0.22),
+                    .init(color: .clear, location: 0.36)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
         )
-    }
-
-    /// The relief tint: pressed ink on the cream paper, caught light on the espresso one.
-    /// `Palette.ink` is adaptive and is the right tone in both schemes — deep brown in light,
-    /// the palette's light warm tone in dark — so both branches name it; the explicit pick
-    /// keeps the two schemes independently tunable.
-    private var embossTint: Color {
-        colorScheme == .dark ? Palette.ink : Palette.ink
     }
 
     private var backdropTurn: AnyTransition {
@@ -149,206 +158,29 @@ struct OnboardingView: View {
 
     @ViewBuilder
     private var pane: some View {
-        switch step {
-        case .intro:
-            WelcomePane { go(.why) }
-        case .why:
-            WhyPane(
-                onContinue: { go(.choose) },
-                onBack: { go(.intro, advancing: false) }
-            )
-        case .choose:
-            ChoosePane(
-                onPick: { option in
-                    chosen = option
-                    go(option == .existing ? .connect : .guide(option))
-                },
-                onBack: { go(.why, advancing: false) }
+        switch current {
+        case .welcome:
+            WelcomePane(onCloud: { go(.cloud) }, onOwnServer: { go(.selfHost) })
+        case .switchServer:
+            SwitchServerPane(onCloud: { go(.cloud) }, onOwnServer: { go(.selfHost) },
+                             onCancel: onCancel)
+        case .cloud:
+            CloudPane(onBack: { go(root, advancing: false) }, onDone: onCancel)
+        case .selfHost:
+            SelfHostPane(
+                onPick: { option in go(option == .existing ? .connect(option) : .guide(option)) },
+                onBack: { go(root, advancing: false) }
             )
         case .guide(let option):
             GuidePane(
                 option: option,
-                onConnect: { go(.connect) },
-                onBack: { go(.choose, advancing: false) }
+                onConnect: { go(.connect(option)) },
+                onBack: { go(.selfHost, advancing: false) }
             )
-        case .connect:
-            ConnectPane(onBack: {
-                go(chosen.map { $0 == .existing ? .choose : .guide($0) } ?? .choose,
-                   advancing: false)
-            })
-        }
-    }
-}
-
-// MARK: - Shared pieces
-
-/// The one action style across the flow: a full-width button that is either the accent-filled
-/// primary or its quiet surface-bound twin. Prominence is a state, never a gate — a muted
-/// button still works (someone whose server is already running must be able to skip ahead).
-private struct PrimaryButton: View {
-    let title: String
-    var prominent = true
-    var busy = false
-    var enabled = true
-    var action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                if busy { ProgressView().controlSize(.small).tint(.white) }
-                Text(title).font(Typeface.body(16, .semibold))
-            }
-            .foregroundStyle(prominent ? .white : Palette.ink)
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: 50)   // min, not fixed — grows with Dynamic Type instead of clipping
-            .padding(.vertical, 4)
-            .background(prominent ? Palette.accent : Palette.surface,
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay {
-                if !prominent {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(Palette.hairline, lineWidth: 1)
-                }
-            }
-            .opacity(enabled ? 1 : 0.5)
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-    }
-}
-
-private struct BackButton: View {
-    var action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label("Back", systemImage: "chevron.left")
-                .font(Typeface.body(15, .semibold))
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(Palette.inkSecondary)
-        .padding(.bottom, 4)
-    }
-}
-
-/// A short value statement: semibold claim, one quiet line of detail. Typographic only —
-/// the rail and the tick-off are this flow's decoration; everything else stays quiet.
-private struct ValueLine: View {
-    let title: String
-    let detail: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(Typeface.body(15, .semibold)).foregroundStyle(Palette.ink)
-            Text(detail).font(Typeface.body(14)).foregroundStyle(Palette.inkSecondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// A copyable command. Copying matters more than it looks — the alternative is retyping a
-/// `docker compose` line from a phone screen onto a laptop.
-private struct CommandBlock: View {
-    let text: String
-    @State private var copied = false
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(text)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundStyle(Palette.ink)
-                .textSelection(.enabled)
-                // A command with no natural break point (a bare URL) truncates with an
-                // ellipsis inside the HStack instead of wrapping — the user can't read what
-                // they're about to copy. Claim the height the wrap needs.
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button {
-                UIPasteboard.general.string = text
-                copied = true
-                Task { try? await Task.sleep(for: .seconds(2)); copied = false }
-            } label: {
-                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 13, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(copied ? Palette.sage : Palette.inkSecondary)
-            .accessibilityLabel(copied ? "Copied" : "Copy command")
-        }
-        .padding(12)
-        .background(Palette.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Palette.hairline)
-        )
-    }
-}
-
-// MARK: - The pane container
-
-/// The one vertical rhythm of the whole flow: header anchored top, action anchored
-/// bottom, and the pane's substance centred in the space left between. Leftover space
-/// splits above and below the content instead of lumping at the bottom, so a sparse
-/// pane reads as composed rather than unfinished. A dense pane (the guide) fills the
-/// space and is unchanged; an over-tall one (short screens, accessibility2 type)
-/// scrolls rather than clipping. Every pane is built from this container — they
-/// differ only in what they put in the three slots.
-private struct OnboardingPane<Header: View, Content: View, Action: View>: View {
-    /// Where content rests in leftover space. `.center` splits it above and below.
-    /// `.bottom` settles the content low, leaving the space open above — the welcome
-    /// pane's deliberate window for the backdrop's rings.
-    enum ContentPlacement { case center, bottom }
-
-    let placement: ContentPlacement
-    let header: Header
-    let content: Content
-    let action: Action
-
-    init(placement: ContentPlacement = .center,
-         @ViewBuilder header: () -> Header,
-         @ViewBuilder content: () -> Content,
-         @ViewBuilder action: () -> Action) {
-        self.placement = placement
-        self.header = header()
-        self.content = content()
-        self.action = action()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            GeometryReader { geo in
-                ScrollView {
-                    content
-                        .frame(maxWidth: .infinity, minHeight: geo.size.height,
-                               alignment: placement == .center ? .center : .bottom)
-                }
-            }
-            action
-        }
-    }
-}
-
-/// The anchored top of a pane: back button, title, and (where given) the one-line lede.
-private struct PaneHeader: View {
-    let title: String
-    var lede: String? = nil
-    var onBack: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            BackButton(action: onBack)
-            Text(title)
-                .font(Typeface.display(26))
-                .foregroundStyle(Palette.ink)
-                .accessibilityAddTraits(.isHeader)
-                .padding(.top, 8)
-            if let lede {
-                Text(lede)
-                    .font(Typeface.body(15))
-                    .foregroundStyle(Palette.inkSecondary)
-                    .padding(.top, 8)
-            }
+        case .connect(let option):
+            ConnectPane(option: option, onBack: {
+                go(option == .existing ? .selfHost : .guide(option), advancing: false)
+            }, onDone: onCancel)
         }
     }
 }
@@ -356,31 +188,37 @@ private struct PaneHeader: View {
 // MARK: - Welcome
 
 private struct WelcomePane: View {
-    var onContinue: () -> Void
+    var onCloud: () -> Void
+    var onOwnServer: () -> Void
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         OnboardingPane(placement: .bottom) {
-            EmptyView()
+            OnboardingTopBar(handoff: .undecided)
         } content: {
-            // `.bottom` + these fixed insets reproduce this pane's verified geometry
-            // exactly through the shared container: the group settles just above the
-            // button, and the open upper area — where the backdrop's rings live —
-            // stays clear of text.
-            group
-                .padding(.top, 40)
-                .padding(.bottom, 28)
+            // `.bottom` settles the group just above the choices; the open upper area is where
+            // the backdrop's rings live, clear of text. At accessibility sizes the choices join
+            // the scrolling content — pinned, they would take most of the screen.
+            VStack(spacing: 0) {
+                group
+                    .padding(.top, 24)
+                    .padding(.bottom, 24)
+                if typeSize.isAccessibilitySize {
+                    ServerChoiceCards(onCloud: onCloud, onOwnServer: onOwnServer)
+                        .padding(.bottom, 8)
+                }
+            }
         } action: {
-            PrimaryButton(title: "Get started", action: onContinue)
-                .keyboardShortcut(.defaultAction)   // ⏎ on Mac / hardware keyboard
-                .padding(.top, 12)
+            if !typeSize.isAccessibilitySize {
+                ServerChoiceCards(onCloud: onCloud, onOwnServer: onOwnServer)
+            }
         }
     }
 
-    /// Wordmark, value lines and the honest card — one settled group, deliberately
-    /// placed low rather than centred; the space above it is the ring window.
+    /// Wordmark and value lines — one settled group, deliberately placed low.
     private var group: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            brandMark
+        VStack(alignment: .leading, spacing: 20) {
+            BrandMark(size: 72)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Command")
                     .font(Typeface.display(40))
@@ -394,133 +232,147 @@ private struct WelcomePane: View {
                     .font(Typeface.body(15))
                     .foregroundStyle(Palette.inkSecondary)
             }
-            VStack(alignment: .leading, spacing: 16) {
-                ValueLine(title: "Capture fast",
-                          detail: "Type or speak a thought.")
-                ValueLine(title: "The assistant shapes it",
-                          detail: "Notes become goals and tasks.")
-                ValueLine(title: "Delegate with lead time",
-                          detail: "Each task reaches its person in time to get done.")
+            VStack(alignment: .leading, spacing: 12) {
+                ValueLine(title: "Capture fast", detail: "Type or speak a thought.")
+                ValueLine(title: "The assistant shapes it", detail: "Notes become goals and tasks.")
+                ValueLine(title: "Delegate with lead time", detail: "Each task reaches its person in time.")
             }
-
-            // The one honest line, set apart so it isn't skimmed past: the next
-            // thing this app asks for is a server, and that is a feature, not an error.
-            Text("Your notes live on a server you own — we don't have one.")
-                .font(Typeface.body(14, .medium))
-                .foregroundStyle(Palette.ink)
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .cardSurface(cornerRadius: 14, elevated: false)
-        }
-    }
-
-    /// The same wordmark treatment as the sign-in screen, so the first-run flow and the
-    /// auth flow read as one product.
-    private var brandMark: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Palette.accentSoft)
-                .frame(width: 80, height: 80)
-            Image(systemName: "calendar.badge.clock")
-                .font(.system(size: 38, weight: .medium))
-                .foregroundStyle(Palette.accent)
-                .accessibilityHidden(true)
         }
     }
 }
 
-// MARK: - Why your own server
+/// The two roads. Shared by the welcome and "Switch server" panes so there is one choice screen.
+private struct ServerChoiceCards: View {
+    var onCloud: () -> Void
+    var onOwnServer: () -> Void
 
-private struct WhyPane: View {
-    var onContinue: () -> Void
-    var onBack: () -> Void
+    var body: some View {
+        VStack(spacing: 10) {
+            Text("Where should your notes live?")
+                .font(Typeface.body(13, .semibold))
+                .foregroundStyle(Palette.inkSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+            ChoiceCard(systemImage: "cloud",
+                       title: "Command Cloud",
+                       detail: "Free. We run the server — just sign up.",
+                       badge: "Recommended",
+                       emphasized: true,
+                       action: onCloud)
+                .keyboardShortcut(.defaultAction)
+            ChoiceCard(systemImage: "server.rack",
+                       title: "My own server",
+                       detail: "Railway, your computer, or an address you have.",
+                       action: onOwnServer)
+        }
+        .padding(.top, 8)
+    }
+}
+
+// MARK: - Switch server
+
+private struct SwitchServerPane: View {
+    @Environment(AppState.self) private var app
+    var onCloud: () -> Void
+    var onOwnServer: () -> Void
+    var onCancel: (() -> Void)?
 
     var body: some View {
         OnboardingPane {
-            PaneHeader(title: "Why your own server", onBack: onBack)
+            PaneHeader(
+                title: "Choose a server",
+                lede: app.phase == .signedIn
+                    ? "Switching signs you out here. Your data stays on the current server."
+                    : "Pick where your account lives.",
+                backTitle: "Cancel",
+                onBack: onCancel,
+                handoff: .undecided
+            )
         } content: {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Everything you capture — notes, plans and every conversation with your assistant — lives on a machine you control. There is no Command cloud: the app has nowhere else to send your data, and we never see a word of it.")
-                    .font(Typeface.body(16))
-                    .foregroundStyle(Palette.ink)
-                Text("Setting yours up takes a few minutes, and the next screens walk you through it.")
-                    .font(Typeface.body(16))
-                    .foregroundStyle(Palette.inkSecondary)
-            }
-            .padding(.top, 14)
-            .padding(.bottom, 8)
+            ServerChoiceCards(onCloud: onCloud, onOwnServer: onOwnServer)
+                .padding(.vertical, 16)
         } action: {
-            PrimaryButton(title: "Continue", action: onContinue)
+            EmptyView()
+        }
+    }
+}
+
+// MARK: - Command Cloud
+
+private struct CloudPane: View {
+    var onBack: () -> Void
+    var onDone: (() -> Void)?
+
+    @Environment(AppState.self) private var app
+    @State private var checking = false
+    @State private var error: String?
+
+    var body: some View {
+        OnboardingPane {
+            PaneHeader(title: "Command Cloud",
+                       lede: "Hosted by Legitimate LLC, the makers of Command.",
+                       onBack: onBack, handoff: .cloud)
+        } content: {
+            VStack(alignment: .leading, spacing: 16) {
+                ValueLine(title: "Free",
+                          detail: "Notes, calendar, tasks, people and goals — and Claude Code over MCP.")
+                ValueLine(title: "The assistant is part of Command Pro",
+                          detail: "Subscribe in the app whenever you want it. Everything else stays free.")
+                ValueLine(title: "Your account, your data",
+                          detail: "No other account can see it. Delete it from the app any time.")
+                if let error {
+                    ErrorBanner(message: error, retry: { Task { await connect() } })
+                }
+            }
+            .padding(.vertical, 16)
+        } action: {
+            PrimaryButton(title: checking ? "Connecting…" : "Continue",
+                          busy: checking, enabled: !checking) { Task { await connect() } }
                 .keyboardShortcut(.defaultAction)
                 .padding(.top, 12)
         }
     }
+
+    private func connect() async {
+        checking = true
+        error = nil
+        let result = await app.probeServer(ServerSetupGuide.cloudURL.absoluteString)
+        if case .found(let url) = result {
+            await app.chooseServer(url, hosting: nil)
+            onDone?()
+        } else {
+            checking = false
+            error = "Couldn't reach Command Cloud. Check your connection and try again."
+        }
+    }
 }
 
-// MARK: - Choose a host
+// MARK: - My own server
 
-private struct ChoosePane: View {
+private struct SelfHostPane: View {
     var onPick: (ServerHostingOption) -> Void
     var onBack: () -> Void
 
     var body: some View {
         OnboardingPane {
             PaneHeader(
-                title: "Choose hosting",
-                lede: "Your server holds everything you capture. Pick what fits — you can move later by pointing the app at a new address.",
-                onBack: onBack
+                title: "Your own server",
+                lede: "Everything stays on a machine you control. Pick what fits.",
+                onBack: onBack,
+                handoff: .undecided
             )
         } content: {
             VStack(spacing: 12) {
                 ForEach(ServerHostingOption.allCases) { option in
-                    OptionCard(option: option) { onPick(option) }
+                    ChoiceCard(systemImage: option.systemImage, title: option.title,
+                               detail: option.subtitle, footnote: option.tradeoff) { onPick(option) }
                 }
             }
-            .padding(.top, 20)
-            .padding(.bottom, 8)
+            .padding(.vertical, 16)
         } action: {
             // The cards are this pane's action; the slot stays empty.
             EmptyView()
         }
-    }
-}
-
-private struct OptionCard: View {
-    let option: ServerHostingOption
-    var action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .top, spacing: 14) {
-                Image(systemName: option.systemImage)
-                    .font(.system(size: 20))
-                    .foregroundStyle(Palette.accent)
-                    .frame(width: 30)
-                    .padding(.top, 1)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(option.title)
-                        .font(Typeface.body(16, .semibold)).foregroundStyle(Palette.ink)
-                    Text(option.subtitle)
-                        .font(Typeface.body(14)).foregroundStyle(Palette.inkSecondary)
-                    if let tradeoff = option.tradeoff {
-                        // The trade-off rides on the card so it is read before the choice,
-                        // not discovered after it.
-                        Text(tradeoff)
-                            .font(Typeface.body(13)).foregroundStyle(Palette.inkSecondary.opacity(0.85))
-                    }
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Palette.inkSecondary)
-                    .accessibilityHidden(true)
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cardSurface(cornerRadius: 16)
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -546,8 +398,9 @@ private struct GuidePane: View {
         OnboardingPane {
             PaneHeader(
                 title: option.title,
-                lede: "Work through these one by one, tapping each number as you finish it.",
-                onBack: onBack
+                lede: "Tap each number as you finish it.",
+                onBack: onBack,
+                handoff: AgentHandoff.Path(option)
             )
         } content: {
             VStack(alignment: .leading, spacing: 0) {
@@ -566,7 +419,7 @@ private struct GuidePane: View {
                 PrimaryButton(title: "Connect to my server", prominent: allDone, action: onConnect)
                     .keyboardShortcut(.defaultAction)
                 if !allDone {
-                    Text("Server already running? You can connect without finishing the list.")
+                    Text("Server already running? Connect now.")
                         .font(Typeface.body(13))
                         .foregroundStyle(Palette.inkSecondary)
                         .multilineTextAlignment(.center)
@@ -637,6 +490,7 @@ private struct GuideStepRow: View {
                 Text(step.detail)
                     .font(Typeface.body(14))
                     .foregroundStyle(Palette.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let command = step.command {
                     CommandBlock(text: command).padding(.top, 4)
                 }
@@ -679,7 +533,9 @@ private struct GuideStepRow: View {
 // MARK: - Connect
 
 private struct ConnectPane: View {
+    let option: ServerHostingOption
     var onBack: () -> Void
+    var onDone: (() -> Void)?
 
     @Environment(AppState.self) private var app
     @State private var text = ""
@@ -695,7 +551,8 @@ private struct ConnectPane: View {
             PaneHeader(
                 title: "Connect",
                 lede: "Paste your server's address. https:// is added if you leave it off.",
-                onBack: onBack
+                onBack: onBack,
+                handoff: AgentHandoff.Path(option)
             )
         } content: {
             VStack(alignment: .leading, spacing: 14) {
@@ -708,6 +565,7 @@ private struct ConnectPane: View {
                         .focused($focused)
                         .submitLabel(.go)
                         .onSubmit { Task { await connect() } }
+                        .accessibilityLabel("Server address")
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { focused = true }
@@ -730,9 +588,10 @@ private struct ConnectPane: View {
                         .foregroundStyle(Palette.sage)
                 }
 
-                Text("The first account created on a new server becomes its owner, and signup closes behind it. Invited by someone? Use the server address from your invite.")
+                Text("The first account on a new server becomes its owner. Invited by someone? Use the address from your invite.")
                     .font(Typeface.body(13))
                     .foregroundStyle(Palette.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.top, 14)
             .padding(.bottom, 8)
@@ -747,7 +606,17 @@ private struct ConnectPane: View {
             ) { Task { await connect() } }
             .padding(.top, 12)
         }
-        .onAppear { focused = true }
+        .onAppear {
+            #if DEBUG
+            // Screenshots/recordings: `-COMMAND_ONBOARDING_ADDRESS <text>` pre-fills the field
+            // and leaves the keyboard down.
+            if let preset = UserDefaults.standard.string(forKey: "COMMAND_ONBOARDING_ADDRESS") {
+                text = preset
+                return
+            }
+            #endif
+            focused = true
+        }
     }
 
     private func connect() async {
@@ -757,12 +626,13 @@ private struct ConnectPane: View {
         error = nil
         // Confirm something is actually there before committing, so a typo surfaces here rather
         // than as a puzzling failure on the sign-in screen afterwards. On success the spinner
-        // stays up until `setServerURL` routes the app onward — that hand-off IS the success
-        // feedback; on failure we come back with a banner the user can act on.
+        // stays up until the app routes onward — that hand-off IS the success feedback; on
+        // failure we come back with a banner the user can act on.
         let result = await app.probeServer(text)
         if case .found(let found) = result {
             succeeded = true
-            await app.setServerURL(found.absoluteString)
+            await app.chooseServer(found, hosting: option)
+            onDone?()
         } else {
             checking = false
             error = result.message

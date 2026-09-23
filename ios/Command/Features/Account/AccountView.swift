@@ -28,7 +28,7 @@ struct AccountView: View {
     @State private var briefings: BriefingPrefs?
     @State private var briefingsError: String?
 
-    private enum ActiveSheet: Int, Identifiable { case server, paywall; var id: Int { rawValue } }
+    private enum ActiveSheet: Int, Identifiable { case switchServer, handoff, paywall; var id: Int { rawValue } }
 
     /// All IANA zones, with the device zone surfaced first so the common case is one tap.
     static let zoneOptions: [String] = {
@@ -155,13 +155,7 @@ struct AccountView: View {
                 flagsSection   // DEBUG-only: never expose dev/security toggles in a Release build
                 #endif
 
-                Section {
-                    LabeledContent("URL", value: app.serverURLString)
-                    Button("Change server") { sheet = .server }
-                } header: {
-                    Text("Server")
-                        .accessibilityAddTraits(.isHeader)
-                }
+                serverSection
 
                 Section {
                     Link("Privacy Policy", destination: BillingConfig.privacyURL)
@@ -218,14 +212,66 @@ struct AccountView: View {
                     Button("Done") { dismiss() }.fontWeight(.semibold).tint(Palette.accent).fixedSize()
                 }
             }
+            .task { await app.refreshServerInfo() }
             .sheet(item: $sheet) { which in
                 switch which {
-                case .server: ServerURLSheet().macSheet()
+                // The onboarding choice screen; committing a different server signs out first
+                // (AppState.setServerURL), which takes this sheet down with the session.
+                case .switchServer:
+                    OnboardingView(start: .switchServer, onCancel: { sheet = nil }).macSheet(.page)
+                case .handoff:
+                    AgentHandoffSheet(path: handoffPath).macSheet(.page)
                 case .paywall: PaywallView(onClose: { sheet = nil }).macSheet(.page)
                 }
             }
             .sheet(isPresented: $showSetPin) {
                 if let id = app.account?.id { SetPinView(accountId: id).macSheet() }
+            }
+        }
+    }
+
+    // MARK: Server
+
+    private var handoffPath: AgentHandoff.Path {
+        SetupFlow.handoffPath(info: app.serverInfo, serverURL: app.serverURLString, chosen: app.chosenHosting)
+    }
+
+    /// Cloud vs self-hosted, the address, and everything setup-shaped: the assistant key (own
+    /// server), the tutorial again, the agent hand-off, and switching servers.
+    @ViewBuilder private var serverSection: some View {
+        let info = app.serverInfo
+        Section {
+            LabeledContent("Hosting", value: SetupFlow.serverKindLabel(info: info, serverURL: app.serverURLString))
+            LabeledContent("Address") {
+                Text(app.serverURLString)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if let info, info.isSelfHosted, info.aiKeySettable {
+                Button(info.aiConfigured ? "Replace assistant AI key" : "Add assistant AI key") {
+                    dismiss()
+                    app.reopenSetup(.aiKey)
+                }
+            }
+            Button("Setup & tutorial") {
+                dismiss()
+                app.reopenSetup(.ready)
+            }
+            Button {
+                sheet = .handoff
+            } label: {
+                Label("Hand setup to your AI agent", systemImage: "sparkles.rectangle.stack")
+            }
+            Button("Switch server") { sheet = .switchServer }
+        } header: {
+            Text("Server")
+                .accessibilityAddTraits(.isHeader)
+        } footer: {
+            if SetupFlow.isCloud(info: info, serverURL: app.serverURLString) {
+                Text("Command Cloud is run by Legitimate LLC. Switching servers signs you out here; your data stays where it is.")
+            } else {
+                Text("Your own Command server. Switching servers signs you out here; your data stays where it is.")
             }
         }
     }
