@@ -36,7 +36,19 @@ class PushResult:
 
 def configured() -> bool:
     s = get_settings()
-    return bool(s.apns_key_path and s.apns_key_id and s.apns_team_id)
+    return bool((s.apns_key or s.apns_key_path) and s.apns_key_id and s.apns_team_id)
+
+
+def _signing_key() -> str:
+    """The .p8 PEM: COMMAND_APNS_KEY's contents, else the file at COMMAND_APNS_KEY_PATH.
+
+    Env UIs often flatten newlines, so a literal `\\n` in the value is read as a line break.
+    """
+    s = get_settings()
+    if s.apns_key:
+        return s.apns_key.replace("\\n", "\n")
+    with open(s.apns_key_path) as f:  # type: ignore[arg-type]
+        return f.read()
 
 
 _jwt_cache: tuple[str, float] | None = None
@@ -49,11 +61,9 @@ def _bearer() -> str:
     if _jwt_cache is not None and now - _jwt_cache[1] < _JWT_TTL_SECONDS:
         return _jwt_cache[0]
     s = get_settings()
-    with open(s.apns_key_path) as f:  # type: ignore[arg-type]
-        key = f.read()
     token = jwt.encode(
         {"iss": s.apns_team_id, "iat": int(now)},
-        key,
+        _signing_key(),
         algorithm="ES256",
         headers={"kid": s.apns_key_id},
     )

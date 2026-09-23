@@ -184,8 +184,10 @@ class Settings(BaseSettings):
 
     # Push (APNs, B4). All optional — push disables gracefully (no-op) unless key path/id/team are
     # set, so a dev server without the .p8 behaves exactly as before. The .p8 is mounted into the
-    # container read-only; env supplies its path + the key/team ids.
+    # container read-only; env supplies its path + the key/team ids. Hosts without files (Railway)
+    # pass the .p8's contents in COMMAND_APNS_KEY instead; it wins over the path.
     apns_key_path: str | None = None
+    apns_key: str | None = None
     apns_key_id: str | None = None                       # 10-char key id
     apns_team_id: str | None = None                      # 10-char Apple team id
     apns_topic: str = "com.legitimateapps.command"       # bundle id

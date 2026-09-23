@@ -55,6 +55,32 @@ def test_bearer_jwt_has_es256_kid_iss_and_verifies(apns_key):
     assert apns._bearer() == token
 
 
+
+@pytest.mark.parametrize("flatten", [False, True], ids=["pem", "newlines-escaped"])
+def test_key_contents_in_env_sign_without_a_file(monkeypatch, flatten: bool) -> None:
+    # Railway and similar hosts have no files to mount: COMMAND_APNS_KEY carries the .p8 itself,
+    # sometimes with its newlines flattened to a literal \n by the host's variable editor.
+    key = ec.generate_private_key(ec.SECP256R1())
+    pem = key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ).decode()
+    monkeypatch.delenv("COMMAND_APNS_KEY_PATH", raising=False)
+    monkeypatch.setenv("COMMAND_APNS_KEY", pem.replace("\n", "\\n") if flatten else pem)
+    monkeypatch.setenv("COMMAND_APNS_KEY_ID", "TEST12345")
+    monkeypatch.setenv("COMMAND_APNS_TEAM_ID", "TEAM123456")
+    get_settings.cache_clear()
+    apns.reset_jwt_cache()
+    try:
+        assert apns.configured() is True
+        claims = jwt.decode(
+            apns._bearer(), key.public_key(), algorithms=["ES256"], options={"verify_exp": False}
+        )
+        assert claims["iss"] == "TEAM123456"
+    finally:
+        get_settings.cache_clear()
+        apns.reset_jwt_cache()
+
+
 # --- the send path: response handling drives whether a device token is DELETED ----------------
 #
 # `unregistered` is load-bearing, not informational: `reminder_job` and `briefing_job` call
