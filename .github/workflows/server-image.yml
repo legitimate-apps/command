@@ -65,11 +65,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Stage release files
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p release
+          cp deploy/docker-compose.yml release/docker-compose.yml
+          cp deploy/.env.example release/env.example
+
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           generate_release_notes: true
+          body: |
+            Run the server: see the [setup guide](https://legitimateapps.com/command/setup), or
+            `docker run -d --name command --restart unless-stopped -p 9071:8000 -v command-data:/data ghcr.io/legitimate-apps/command-server`.
+            For Compose, download both files below, rename `env.example` to `.env`, and run `docker compose up -d`.
           files: |
-            deploy/docker-compose.yml
-            deploy/.env.example
+            release/docker-compose.yml
+            release/env.example
