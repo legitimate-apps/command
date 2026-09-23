@@ -24,6 +24,7 @@ from ..db import after_commit, now_iso
 from ..errors import NotFound, ValidationError
 from . import assignments as assignments_core
 from . import notes as notes_core
+from . import quotas
 
 VALID_ENTITY_KINDS = {"note", "assignment"}
 
@@ -99,6 +100,7 @@ def save(
             f"This {entity_kind} already has {count} attachments.",
             hint=f"The limit is {settings.max_attachments_per_entity} per {entity_kind}; delete one first.",
         )
+    quotas.check_attachment(conn, account_id, len(data))
     name = (filename or "").strip().replace("/", "_").replace("\\", "_") or "attachment"
     stored = uuid.uuid4().hex
     directory = _account_dir(account_id)

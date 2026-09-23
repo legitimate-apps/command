@@ -42,6 +42,7 @@ from ...db import connection
 from .. import accounts as accounts_core
 from .. import clock
 from .. import confirm as confirm_core
+from ..ai import key as ai_key
 from . import tiers
 from .threads import ORIGIN_A2A, ORIGIN_APP
 from .tools import PEER_TOOLS, SYSTEM_PROMPT, TOOLS, AgentDeps
@@ -140,7 +141,7 @@ class _CacheAwareOpenAIChatModel(OpenAIChatModel):
 
 def _model(slug: str) -> OpenAIChatModel:
     s = get_settings()
-    provider = OpenAIProvider(base_url=s.ai_base_url, api_key=s.ai_api_key or "")
+    provider = OpenAIProvider(base_url=s.ai_base_url, api_key=ai_key.api_key() or "")
     settings: OpenAIChatModelSettings | None = None
     # OpenRouter provider routing: keep the user's notes away from any upstream that
     # may train on prompts. Matters most for the wide-fanout non-Anthropic slugs.

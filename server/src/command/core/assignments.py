@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from ..db import now_iso
 from ..errors import NotFound, ValidationError
-from . import _cursor, clock
+from . import _cursor, clock, quotas
 from . import activities as activities_core
 from . import delegatees as delegatees_core
 from . import goals as goals_core
@@ -272,6 +272,7 @@ def create(
         goals_core.get(conn, account_id, goal_id)
     if assignee_id is not None:
         delegatees_core.get(conn, account_id, delegatee_id=assignee_id)
+    quotas.check_rows(conn, account_id, "assignment")
     ts = now_iso()
     cur = conn.execute(
         "INSERT INTO assignments (account_id, goal_id, title, details, assignee_id, schedule_kind, "

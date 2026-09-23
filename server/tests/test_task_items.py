@@ -66,7 +66,8 @@ def test_scoped_per_account_and_parent(conn: sqlite3.Connection) -> None:
     b = _acct(conn, "owner_b")
     p1, p2 = _assignment(conn, a), _assignment(conn, a)
     task_items.add(conn, a, "assignment", p1, text="mine")
-    assert task_items.list_items(conn, b, "assignment", p1) == []     # other account sees nothing
+    with pytest.raises(NotFound):                                     # other account: no such parent
+        task_items.list_items(conn, b, "assignment", p1)
     assert task_items.list_items(conn, a, "assignment", p2) == []     # other parent sees nothing
     # An item can't be touched cross-account.
     it = task_items.add(conn, a, "assignment", p1, text="secret")

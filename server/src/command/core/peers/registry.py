@@ -10,10 +10,7 @@ recover one.
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
-import os
 import sqlite3
 from typing import Any, Protocol
 from urllib.parse import urlsplit, urlunsplit
@@ -23,6 +20,7 @@ from pydantic import BaseModel
 from ...config import get_settings
 from ...db import now_iso
 from ...errors import NotFound, ValidationError
+from .. import sealed
 from .._unset import UNSET, Unset
 from ..delegatees import slugify
 from .safefetch import safe_https_json
@@ -73,17 +71,7 @@ def _row(r: sqlite3.Row) -> Peer:
     )
 
 
-_DEV_TOKEN_KEY = "dev-insecure-peer-token-key"
-
-
-def _aes_key() -> bytes:
-    s = get_settings()
-    key = s.peer_token_key
-    if s.is_prod and (not key or key == _DEV_TOKEN_KEY):
-        # Fail closed: compose passes ${COMMAND_PEER_TOKEN_KEY:-}, so a missing
-        # .env value arrives as "" — never silently encrypt with a weak key in prod.
-        raise RuntimeError("COMMAND_PEER_TOKEN_KEY must be set to a real secret in prod")
-    return hashlib.sha256((key or _DEV_TOKEN_KEY).encode("utf-8")).digest()
+_TOKEN_PURPOSE = b"peer-token"
 
 
 def _allow_http_hosts() -> frozenset[str]:
@@ -93,18 +81,11 @@ def _allow_http_hosts() -> frozenset[str]:
 
 
 def _encrypt_token(token: str) -> str:
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # lazy: keep idle RSS lean
-
-    nonce = os.urandom(12)
-    sealed = AESGCM(_aes_key()).encrypt(nonce, token.encode("utf-8"), b"peer-token")
-    return base64.b64encode(nonce + sealed).decode("ascii")
+    return sealed.seal(token, purpose=_TOKEN_PURPOSE)
 
 
 def _decrypt_token(ciphertext: str) -> str:
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # lazy: keep idle RSS lean
-
-    raw = base64.b64decode(ciphertext)
-    return AESGCM(_aes_key()).decrypt(raw[:12], raw[12:], b"peer-token").decode("utf-8")
+    return sealed.unseal(ciphertext, purpose=_TOKEN_PURPOSE)
 
 
 def _card_fetch_url(user_url: str) -> str:

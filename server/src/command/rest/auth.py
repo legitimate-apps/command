@@ -7,10 +7,11 @@ from pydantic import BaseModel, Field
 
 from ..config import Settings, get_settings
 from ..core import accounts as accounts_core
-from ..core import delegatee_access, llm_budget
+from ..core import delegatee_access, instance, llm_budget
 from ..core.ratelimit import SlidingWindowLimiter
 from ..errors import AuthFailed, PermissionDenied, RateLimited
 from . import cookies
+from .client_ip import client_ip
 from .deps import Config, CurrentAccount, Db, session_token_from_request
 
 # Per-username login brute-force guard. Module-level so it accumulates state across
@@ -38,6 +39,20 @@ _invite_limiter = SlidingWindowLimiter(
 # invite, whereas an unbounded guessing channel cannot be un-run.
 _INVITE_GLOBAL_KEY = "invite-attempts"
 _invite_global_limiter = SlidingWindowLimiter(max_attempts=60, window_seconds=300.0)
+
+# Per-client-IP guards (see client_ip.py for how the address is chosen). The per-username
+# limiter above cannot see an attacker spraying one password across many usernames, and nothing
+# bounded account creation on an open-signup server (Command Cloud). Failed logins count per
+# address across all usernames; for registration EVERY attempt counts — a successful signup is
+# exactly the thing a flood produces.
+_login_ip_limiter = SlidingWindowLimiter(
+    max_attempts=get_settings().login_ip_max_failures,
+    window_seconds=get_settings().login_window_seconds,
+)
+_register_ip_limiter = SlidingWindowLimiter(
+    max_attempts=get_settings().register_ip_max_attempts,
+    window_seconds=get_settings().register_ip_window_seconds,
+)
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
@@ -94,11 +109,23 @@ def _set_session_cookie(
 def register(
     body: RegisterIn, request: Request, response: Response, settings: Config, conn: Db
 ) -> AccountOut:
+    ip = client_ip(request, settings.trusted_proxy_hops)
+    if not _register_ip_limiter.allowed(ip):
+        raise RateLimited(
+            "Too many sign-up attempts from this network. Please try again later."
+        )
+    _register_ip_limiter.record_failure(ip)  # every attempt counts, see the limiter's comment
     # First-user-only by default. The instance belongs to whoever claims it; after that the door
     # is shut unless the operator reopens it with COMMAND_ALLOW_REGISTRATION=true. Without this,
     # a self-hosted server on a public hostname lets any passer-by create an account and spend
-    # the owner's model budget — and there is no signal anywhere that it happened.
-    if not settings.allow_registration and accounts_core.any_account_exists(conn):
+    # the owner's model budget — and there is no signal anywhere that it happened. Command Cloud
+    # follows COMMAND_ALLOW_REGISTRATION alone (core/instance.registration_open).
+    if not instance.registration_open(conn, settings):
+        if settings.is_cloud:
+            raise PermissionDenied(
+                "This server isn't accepting new accounts right now.",
+                hint="Sign in with an existing account, or try again later.",
+            )
         raise PermissionDenied(
             "This Command server already has an account and is not accepting new ones.",
             hint="It's a personal server. If it's yours, set COMMAND_ALLOW_REGISTRATION=true "
@@ -117,7 +144,8 @@ def login(
     body: LoginIn, request: Request, response: Response, settings: Config, conn: Db
 ) -> AccountOut:
     key = body.username.strip().lower()
-    if not _login_limiter.allowed(key):
+    ip = client_ip(request, settings.trusted_proxy_hops)
+    if not _login_limiter.allowed(key) or not _login_ip_limiter.allowed(ip):
         raise RateLimited(
             "Too many failed login attempts. Please wait a few minutes and try again."
         )
@@ -125,7 +153,10 @@ def login(
         account = accounts_core.login(conn, body.username, body.password)
     except AuthFailed:
         _login_limiter.record_failure(key)
+        _login_ip_limiter.record_failure(ip)
         raise
+    # Only the username's bucket clears: one success must not wipe the failures an address
+    # racked up against other accounts.
     _login_limiter.reset(key)
     raw, _ = accounts_core.create_session(conn, account.id, days=settings.session_days)
     _set_session_cookie(request, response, settings, raw)

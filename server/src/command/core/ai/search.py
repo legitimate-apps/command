@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from ...config import get_settings
+from . import key as ai_key
 
 
 @dataclass
@@ -36,7 +37,7 @@ def web_search(query: str, *, max_results: int = 5, model: str | None = None) ->
     `max_results` is clamped to 1-10. Returns `SearchResult(ok=False)` on any
     failure (no key, network error, non-2xx, malformed body)."""
     settings = get_settings()
-    key = settings.ai_api_key
+    key = ai_key.api_key()
     if not key:
         return SearchResult(ok=False)
     model = model or settings.ai_search_model

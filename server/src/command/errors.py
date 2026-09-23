@@ -95,3 +95,32 @@ class ConfirmRequired(CommandError):
 class RateLimited(CommandError):
     code = "rate_limited"
     status = 429
+
+
+class QuotaExceeded(PermissionDenied):
+    """An account hit one of its per-account ceilings (attachments, notes, …). Ceilings are
+    sized far above real use, so hitting one means cleanup is needed, not waiting."""
+
+    code = "quota_exceeded"
+
+
+# --- The server's model key (PUT/DELETE /api/server/ai-key) -----------------------
+
+
+class InvalidApiKey(ValidationError):
+    code = "invalid_key"
+
+
+class NotOwner(PermissionDenied):
+    code = "not_owner"
+
+
+class ManagedByEnv(Conflict):
+    code = "managed_by_env"
+
+
+class ProviderUnavailable(CommandError):
+    """An upstream (model provider, RevenueCat) could not be reached or answered oddly."""
+
+    code = "provider_unavailable"
+    status = 502

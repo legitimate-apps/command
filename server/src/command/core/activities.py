@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from ..db import now_iso
 from ..errors import NotFound, ValidationError
-from . import _cursor
+from . import _cursor, quotas
 from . import delegatees as delegatees_core
 from . import goals as goals_core
 
@@ -150,6 +150,7 @@ def create(
     if assignment_id is not None:
         _check_assignment(conn, account_id, assignment_id)
     category = category.strip() if isinstance(category, str) and category.strip() else None
+    quotas.check_rows(conn, account_id, "activity")
     ts = now_iso()
     cur = conn.execute(
         "INSERT INTO activities (account_id, actor_id, title, details, category, occurred_at, "

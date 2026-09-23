@@ -66,6 +66,7 @@ def test_checklist_scoped_to_account(open_signup_client: TestClient) -> None:
     ).json()["id"]
     # Register a second account (new session cookie) — it must not see or touch the first's items.
     _auth(client, "owner_b")
-    assert client.get("/api/items", params={"parent_type": "assignment", "parent_id": aid}).json() == []
+    # Another account's parent is "not found", as on every other route (was an empty list).
+    assert client.get("/api/items", params={"parent_type": "assignment", "parent_id": aid}).status_code == 404
     assert client.patch(f"/api/items/{item_id}", json={"done": True}).status_code == 404
     assert client.delete(f"/api/items/{item_id}").status_code == 404

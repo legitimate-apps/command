@@ -96,6 +96,9 @@ def delete_for_parent(
 def list_items(conn: sqlite3.Connection, account_id: int, parent_type: str,
                parent_id: int) -> list[TaskItem]:
     _check_parent(parent_type)
+    # Another account's parent (or none at all) is "not found", exactly as it is for `add` —
+    # an empty list would still confirm nothing, but every other surface answers 404 here.
+    _validate_parent(conn, account_id, parent_type, parent_id)
     rows = conn.execute(
         "SELECT * FROM task_items WHERE account_id = ? AND parent_type = ? AND parent_id = ? "
         "ORDER BY position, id",
@@ -160,6 +163,7 @@ def delete(conn: sqlite3.Connection, account_id: int, item_id: int) -> None:
 def reorder(conn: sqlite3.Connection, account_id: int, parent_type: str, parent_id: int,
             ordered_ids: list[int]) -> list[TaskItem]:
     _check_parent(parent_type)
+    _validate_parent(conn, account_id, parent_type, parent_id)
     now = _now()
     for pos, iid in enumerate(ordered_ids):
         conn.execute(

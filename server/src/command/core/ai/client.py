@@ -11,11 +11,12 @@ from __future__ import annotations
 import httpx
 
 from ...config import get_settings
+from . import key as ai_key
 
 
 def enabled() -> bool:
     """True when an API key is configured. Title-gen no-ops gracefully otherwise."""
-    return bool(get_settings().ai_api_key)
+    return ai_key.configured()
 
 
 def complete(
@@ -30,7 +31,7 @@ def complete(
     network error, non-2xx, malformed body). `extra` merges into the request body
     (e.g. {"reasoning": {"enabled": False}} to skip a reasoning model's think pass)."""
     settings = get_settings()
-    key = settings.ai_api_key
+    key = ai_key.api_key()
     if not key:
         return None
     headers = {

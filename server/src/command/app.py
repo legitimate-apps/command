@@ -29,6 +29,7 @@ from .db import connection, init_db
 from .errors import CommandError
 from .mcp.server import build_mcp
 from .rest.activities import router as activities_router
+from .rest.admin import router as admin_router
 from .rest.agent import router as agent_router
 from .rest.assignments import router as assignments_router
 from .rest.attachments import router as attachments_router
@@ -42,6 +43,7 @@ from .rest.my import router as my_router
 from .rest.notes import router as notes_router
 from .rest.peers import router as peers_router
 from .rest.push import router as push_router
+from .rest.server import router as server_router
 from .rest.session_refresh import SessionRefreshMiddleware
 from .rest.settings import router as settings_router
 from .rest.webhooks import router as webhooks_router
@@ -153,6 +155,8 @@ def create_app() -> FastAPI:
         webhooks_router,
         legal_router,
         push_router,
+        server_router,
+        admin_router,
     ):
         app.include_router(r)
 

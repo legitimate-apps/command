@@ -24,8 +24,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..core import accounts as accounts_core
-from ..core import entitlements
+from ..core import entitlements, revenuecat
 from ..core.agent import settle, threads, tiers, usage
+from ..core.ai import key as ai_key
 from ..db import connection
 from ..errors import AuthFailed, Conflict, NotFound, ValidationError
 from .common import Page
@@ -195,7 +196,7 @@ async def chat(payload: ChatRequest, request: Request, settings: Config) -> Stre
     account_id = account.id
 
     async def gen() -> AsyncIterator[str]:
-        if not settings.ai_api_key:
+        if not ai_key.configured():
             yield _sse({"type": "error", "error": "The agent isn't configured on this server yet."})
             return
         images, image_error = _decode_images(images_in)
@@ -493,7 +494,11 @@ def _entitlement_status(conn: Db, account_id: int, settings: Config) -> Entitlem
 
 @router.get("/entitlement", response_model=EntitlementStatus)
 def get_entitlement(account: CurrentAccount, conn: Db, settings: Config) -> EntitlementStatus:
-    """The app reads this to decide whether to show the paywall / the consent gate."""
+    """The app reads this to decide whether to show the paywall / the consent gate.
+
+    With COMMAND_REVENUECAT_API_KEY set it first confirms the account with RevenueCat
+    (debounced), so a purchase counts here even when the webhook points at another server."""
+    revenuecat.refresh_if_due(conn, account.id, settings)
     return _entitlement_status(conn, account.id, settings)
 
 

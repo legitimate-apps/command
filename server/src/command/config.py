@@ -24,12 +24,25 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # What this server is. "self" (default): one owner's personal server — the first account
+    # owns it and may set the assistant's model key from the app. "cloud": a multi-tenant
+    # service (Command Cloud) whose operator supplies everything by env. Reported by
+    # GET /api/server/info so the app can label the server and pick its onboarding path.
+    server_kind: str = "self"
+
     # Storage
     db_path: str = "./data/command.db"
     # Attachment bytes live on disk (never in SQLite). Unset ⇒ <db dir>/attachments.
     attachments_dir: str | None = None
     max_attachment_bytes: int = 25 * 1024 * 1024
     max_attachments_per_entity: int = 20
+    # Per-account ceilings (0 = unlimited). Sized so no real planner reaches them; they exist
+    # so one account on a shared server cannot fill its disk or its database.
+    max_attachment_bytes_per_account: int = 2 * 1024 * 1024 * 1024
+    max_attachments_per_account: int = 5_000
+    max_notes_per_account: int = 100_000
+    max_assignments_per_account: int = 50_000
+    max_activities_per_account: int = 200_000
 
     # HTTP bind (loopback in prod; the tunnel reaches it here). A bare PORT is honored too,
     # because hosts like Railway assign the listening port that way.
@@ -72,6 +85,21 @@ class Settings(BaseSettings):
     # `login_max_attempts` failures within `login_window_seconds`.
     login_max_attempts: int = 10
     login_window_seconds: int = 300
+    # Per-client-IP guards on top of the per-username one: failed logins from one address
+    # across all usernames (same window as above), and registrations from one address (every
+    # attempt counts, successful or not).
+    login_ip_max_failures: int = 50
+    register_ip_max_attempts: int = 10
+    register_ip_window_seconds: int = 3600
+    # How many reverse proxies in front of this server append to X-Forwarded-For. 0 (default)
+    # ignores the header and uses the connection's peer address — the only safe choice when
+    # nothing trusted sets it, because any client can send the header. Behind exactly one
+    # proxy (Railway's edge, or one Cloudflare hop) set 1: the client is the entry it added.
+    trusted_proxy_hops: int = 0
+
+    # Operator backups: GET /api/admin/backup with `Authorization: Bearer <token>`. Unset ⇒ the
+    # endpoint does not exist (404).
+    backup_token: str | None = None
 
     # CORS (irrelevant for the native iOS client; configurable for any web use)
     cors_origins: list[str] = []
@@ -133,6 +161,14 @@ class Settings(BaseSettings):
     agent_price_display: str = "$19.99/mo"
     agent_trial_days: int = 7
     revenuecat_webhook_token: str | None = None
+    # RevenueCat REST confirmation. The webhook reaches only the one server it points at; with a
+    # secret API key set, GET /api/agent/entitlement also asks RevenueCat directly (at most once
+    # per `revenuecat_refresh_seconds` per account), so any number of servers can share one
+    # RevenueCat project. `revenuecat_entitlement_id` is the entitlement the app unlocks with.
+    revenuecat_api_key: str | None = None
+    revenuecat_api_base: str = "https://api.revenuecat.com/v1"
+    revenuecat_entitlement_id: str = "pro"
+    revenuecat_refresh_seconds: int = 600
 
     # Monetization — the assistant "credits" model (decision 2026-07-06). Credits are a
     # display concept: the backend tracks a REAL-USD agent budget per subscription period,
@@ -163,6 +199,15 @@ class Settings(BaseSettings):
     # private ranges — DEV/E2E ONLY (e.g. "10.0.0.5"). MUST stay empty in prod.
     peer_allow_http_hosts: str = ""
 
+    @field_validator("server_kind", mode="before")
+    @classmethod
+    def _normalize_server_kind(cls, value: object) -> object:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return "self"
+        if isinstance(value, str) and value.strip().lower() in SERVER_KINDS:
+            return value.strip().lower()
+        raise ValueError(f"COMMAND_SERVER_KIND must be one of {sorted(SERVER_KINDS)}")
+
     @field_validator("cookie_secure", mode="before")
     @classmethod
     def _auto_cookie_secure(cls, value: object) -> object:
@@ -174,7 +219,12 @@ class Settings(BaseSettings):
     def is_prod(self) -> bool:
         return self.environment.lower() == "prod"
 
+    @property
+    def is_cloud(self) -> bool:
+        return self.server_kind == "cloud"
 
+
+SERVER_KINDS = frozenset({"cloud", "self"})
 _DEV_PEER_TOKEN_KEY = "dev-insecure-peer-token-key"
 INSTANCE_SECRETS_FILE = "instance-secrets.json"
 

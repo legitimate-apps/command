@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from ..db import now_iso
 from ..errors import NotFound, ValidationError
-from . import _cursor
+from . import _cursor, quotas
 
 VALID_SOURCES = {"typed", "voice"}
 MAX_LIMIT = 200
@@ -74,6 +74,7 @@ def create(
         raise ValidationError("Note body cannot be empty.")
     if source not in VALID_SOURCES:
         raise ValidationError(f"source must be one of {sorted(VALID_SOURCES)}.")
+    quotas.check_rows(conn, account_id, "note")
     title = (title or "").strip() or None
     title_status = USER_TITLE if title else None  # an explicit title is the user's
     ts = now_iso()

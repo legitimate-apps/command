@@ -181,9 +181,10 @@ def test_prod_refuses_missing_or_dev_token_key(monkeypatch):
     # get_settings() fills a generated key in prod (test_config_instance); this guards the
     # key derivation itself, so a Settings that somehow skipped that step still fails closed.
     from command.config import Settings
+    from command.core import sealed
 
     for bad in ("", "dev-insecure-peer-token-key"):
         s = Settings(environment="prod", peer_token_key=bad)
-        monkeypatch.setattr(registry, "get_settings", lambda s=s: s)
+        monkeypatch.setattr(sealed, "get_settings", lambda s=s: s)
         with pytest.raises(RuntimeError):
-            registry._aes_key()
+            registry._encrypt_token("a-token")

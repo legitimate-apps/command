@@ -7,6 +7,21 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+@pytest.fixture(autouse=True)
+def _reset_process_state() -> None:
+    """Module-level state that outlives a test: the auth rate limiters (every TestClient shares
+    one peer address, so per-IP buckets would leak between tests) and the cached model key."""
+    from command.core.ai import key as ai_key
+    from command.rest import auth
+
+    for limiter in (
+        auth._login_limiter, auth._invite_limiter, auth._invite_global_limiter,
+        auth._login_ip_limiter, auth._register_ip_limiter,
+    ):
+        limiter.clear()
+    ai_key.reset_cache()
+
+
 @pytest.fixture
 def conn(tmp_path: object) -> Iterator[sqlite3.Connection]:
     from command.db import connect, init_db
