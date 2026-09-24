@@ -99,7 +99,7 @@ struct AccountView: View {
                     // config, and a long monospaced string is fiddly to select by hand.
                     if let token {
                         Button {
-                            UIPasteboard.general.string = token
+                            SecretPasteboard.copy(token)
                             withAnimation(.easeInOut(duration: 0.2)) { copiedToken = true }
                             Task {
                                 try? await Task.sleep(for: .seconds(2))
@@ -330,7 +330,7 @@ struct AccountView: View {
                     .textSelection(.enabled)
 
                 Button {
-                    UIPasteboard.general.string = link
+                    SecretPasteboard.copy(link)
                     withAnimation(.easeInOut(duration: 0.2)) { copiedCalendarLink = true }
                     Task {
                         try? await Task.sleep(for: .seconds(2))

@@ -328,7 +328,7 @@ struct DelegateeEditor: View {
                     .textSelection(.enabled)
 
                 Button {
-                    UIPasteboard.general.string = inviteToken
+                    SecretPasteboard.copy(inviteToken)
                     Haptics.success()
                     copiedInvite = true
                     Task {
