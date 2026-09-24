@@ -90,8 +90,8 @@ final class PushService {
     }
 }
 
-/// Minimal app delegate: SwiftUI has no direct hook for the APNs token callbacks, so we adopt one
-/// via `@UIApplicationDelegateAdaptor` purely to forward the device token to `PushService`.
+/// Minimal app delegate for what SwiftUI has no hook for: the APNs token callbacks (forwarded to
+/// `PushService`), foreground notification presentation, and the system Find menu's `find:`.
 final class CommandAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
@@ -115,5 +115,14 @@ final class CommandAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificat
     func application(_ application: UIApplication,
                      didFailToRegisterForRemoteNotificationsWithError error: Error) {
         // Simulator / missing entitlement — reminders still work in-app; only OS push is unavailable.
+    }
+
+    /// Edit ▸ Find ▸ Find… (⌘F) on Mac and on iPad with a keyboard. UIKit's own Find menu owns ⌘F,
+    /// so a SwiftUI "Find" command with the same shortcut is dropped from the menu bar as a
+    /// conflict. The menu sends `find:` up the responder chain, which ends at this delegate (via
+    /// SwiftUI's), so implementing it here enables the system item and reveals list search. A text
+    /// view with its own find interaction sits earlier in the chain and keeps ⌘F for itself.
+    @objc func find(_ sender: Any?) {
+        AppCommandBus.active?.send(.find)
     }
 }

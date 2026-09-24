@@ -87,7 +87,7 @@ struct MainTabView: View {
         case .newAssignment:   navigator.show(.tasks);      navigator.composeAssignment = true
         case .newChat:         navigator.show(.assistant);  navigator.startNewChat = true
         case .voiceConversation: navigator.show(.assistant); navigator.startVoiceConversation = true
-        case .find:            navigator.focusSearch = true
+        case .find:            navigator.showSearch()
         case .refresh:         Task { await app.reloadVisible(navigator.destination) }
         }
     }

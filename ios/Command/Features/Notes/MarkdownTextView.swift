@@ -250,6 +250,9 @@ struct MarkdownTextView: UIViewRepresentable {
         view.smartQuotesType = .no
         view.smartDashesType = .no
         view.smartInsertDeleteType = .no
+        // ⌘F / Edit ▸ Find inside a note finds in the note. It sits before the app delegate in the
+        // responder chain, so outside the editor ⌘F still reveals the list search.
+        view.isFindInteractionEnabled = true
         view.text = text
         controller.textView = view
         context.coordinator.restyle(view)

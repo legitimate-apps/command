@@ -11,7 +11,7 @@ struct CommandApp: App {
     @State private var app = AppState()
     @State private var bus = AppCommandBus()   // Mac/iPad menu + keyboard intents
     @Environment(\.scenePhase) private var scenePhase
-    // Adopt an app delegate solely to receive the APNs device token (SwiftUI has no direct hook).
+    // An app delegate for what SwiftUI has no hook for: APNs tokens and the system Find menu.
     @UIApplicationDelegateAdaptor(CommandAppDelegate.self) private var appDelegate
 
     init() { Self.configureNavigationAppearance() }
@@ -30,6 +30,7 @@ struct CommandApp: App {
                     // Let the App Intents layer live-update the running UI after a background
                     // capture, and let "Open Command" intents reach the active shell.
                     ShortcutNavigation.shared.appState = app
+                    AppCommandBus.active = bus
                     app.subscription.configureIfNeeded()   // RevenueCat, once, before sign-in
                     await app.bootstrap()
                 }

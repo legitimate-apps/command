@@ -25,6 +25,34 @@ final class NavigatorTests: XCTestCase {
         XCTAssertNil(nav.selectedPersonId)
     }
 
+    func test_showSearch_inASearchableList_staysAndRequestsSearch() {
+        for dest in [AppDestination.notes, .tasks, .people] {
+            let nav = Navigator()
+            nav.show(dest)
+            nav.selectedNoteId = 4
+
+            nav.showSearch()
+
+            XCTAssertEqual(nav.destination, dest)
+            XCTAssertTrue(nav.focusSearch)
+            XCTAssertEqual(nav.selectedNoteId, 4, "searching must not drop the open item")
+        }
+    }
+
+    /// Calendar and Assistant have no list search: a `focusSearch` left set there was never
+    /// consumed, so it latched true and every later ⌘F changed nothing.
+    func test_showSearch_withoutAListSearch_goesToNotes() {
+        for dest in [AppDestination.calendar, .assistant] {
+            let nav = Navigator()
+            nav.show(dest)
+
+            nav.showSearch()
+
+            XCTAssertEqual(nav.destination, .notes)
+            XCTAssertTrue(nav.focusSearch)
+        }
+    }
+
     func test_select_assignment_setsDetail_andSyncsToTasks() {
         let nav = Navigator()
         nav.show(.calendar)

@@ -44,8 +44,6 @@ struct CommandMenus: Commands {
 
         // Format ▸ … drives the focused Markdown note editor. The same actions back the on-screen
         // formatting bar and the text view's own ⌘-key commands, so all three call one implementation.
-        // Format ▸ … drives the focused Markdown note editor. The same actions back the on-screen
-        // formatting bar and the text view's own ⌘-key commands, so all three call one implementation.
         CommandMenu("Format") {
             ForEach(FormatAction.inline) { formatItem($0) }
             Divider()
@@ -54,11 +52,10 @@ struct CommandMenus: Commands {
             ForEach(FormatAction.indentation) { formatItem($0) }
         }
 
-        // ⌘F reveals the search field in the active list (Notes/People/Tasks).
-        CommandGroup(after: .textEditing) {
-            Button("Find") { bus.send(.find) }
-                .keyboardShortcut("f", modifiers: .command)
-        }
+        // Edit ▸ Find, Spelling and Grammar, Substitutions, Transformations, Speech. SwiftUI adds
+        // these only when asked. Find ▸ Find… is ⌘F, handled by `CommandAppDelegate.find(_:)`; a
+        // "Find" command of our own with the same shortcut conflicts with it and UIKit drops it.
+        TextEditingCommands()
 
         // The standard App ▸ Settings… slot (⌘,). Opens Account, which is the app's
         // settings surface; the split shell presents it as a sheet.

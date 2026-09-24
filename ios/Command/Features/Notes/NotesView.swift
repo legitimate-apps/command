@@ -77,7 +77,7 @@ struct NotesView: View {
                 if want == true { composing = true; nav?.composeNote = false }
             }
             // ⌘F / "Find" reveals the hidden search field.
-            .onChange(of: nav?.focusSearch) { _, want in
+            .onChange(of: nav?.focusSearch, initial: true) { _, want in
                 if want == true { withAnimation(.easeOut(duration: 0.2)) { searchActive = true }; nav?.focusSearch = false }
             }
             #if DEBUG

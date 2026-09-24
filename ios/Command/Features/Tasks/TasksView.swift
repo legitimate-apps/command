@@ -144,7 +144,7 @@ struct TasksView: View {
             // ⌘F / "Find" reveals the hidden search field (Assignments/Goals tabs). Always reset the
             // one-shot flag when consumed — even on the Log tab (tab == 2), where search doesn't open —
             // else it latches true and every later ⌘F app-wide becomes a silent no-op.
-            .onChange(of: nav?.focusSearch) { _, want in
+            .onChange(of: nav?.focusSearch, initial: true) { _, want in
                 if want == true {
                     if tab != 2 { withAnimation(.easeOut(duration: 0.2)) { searchActive = true } }
                     nav?.focusSearch = false

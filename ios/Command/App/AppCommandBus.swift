@@ -28,6 +28,10 @@ final class AppCommandBus {
     private(set) var last: Intent?
     private(set) var tick = 0
 
+    /// The app's one bus, for senders outside the SwiftUI tree (the app delegate's responder-chain
+    /// actions). Set when the scene starts.
+    @ObservationIgnored static weak var active: AppCommandBus?
+
     func send(_ intent: Intent) {
         last = intent
         tick &+= 1

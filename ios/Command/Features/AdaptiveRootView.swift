@@ -46,6 +46,9 @@ enum AppDestination: Int, CaseIterable, Identifiable {
     /// The five primary sections, in sidebar/tab order. Excludes `account`.
     static var primary: [AppDestination] { [.calendar, .notes, .assistant, .tasks, .people] }
 
+    /// Sections whose list has a search field for ⌘F to reveal.
+    var hasListSearch: Bool { self == .notes || self == .tasks || self == .people }
+
     var title: String {
         switch self {
         case .calendar:  return "Calendar"
@@ -160,7 +163,7 @@ private struct SplitRootView: View {
         case .newAssignment:   navigator.show(.tasks);     navigator.composeAssignment = true
         case .newChat:         navigator.show(.assistant); navigator.startNewChat = true
         case .voiceConversation: navigator.show(.assistant); navigator.startVoiceConversation = true
-        case .find:            navigator.focusSearch = true
+        case .find:            navigator.showSearch()
         case .refresh:         Task { await app.reloadVisible(navigator.destination) }
         }
     }

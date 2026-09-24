@@ -59,6 +59,14 @@ final class Navigator {
         selectedPersonId = nil
     }
 
+    /// ⌘F. Sections without a list search (Calendar, Assistant) have nothing to reveal, and a
+    /// `focusSearch` nobody consumes latches true — after which every later ⌘F is a no-op because
+    /// the value never changes. So search goes to Notes from there.
+    func showSearch() {
+        if !destination.hasListSearch { show(.notes) }
+        focusSearch = true
+    }
+
     /// Open an entity in the detail column, syncing the section it belongs to so
     /// the sidebar selection and content column stay coherent.
     func select(_ subject: DetailSubject) {
