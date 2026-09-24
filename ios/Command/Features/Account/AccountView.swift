@@ -25,6 +25,8 @@ struct AccountView: View {
     @State private var loadingCalendarSubscription = false
     @State private var calendarSubscriptionError: String?
     @State private var copiedCalendarLink = false
+    @State private var copiedToken = false
+    @State private var confirmRegenerate = false
     @State private var briefings: BriefingPrefs?
     @State private var briefingsError: String?
 
@@ -93,8 +95,30 @@ struct AccountView: View {
                         Text(loadingToken ? "Loading…" : "Hidden")
                             .foregroundStyle(Palette.inkSecondary)
                     }
-                    Button("Reveal token") { Task { await loadToken() } }
-                    Button("Regenerate", role: .destructive) { Task { await regenerate() } }
+                    // Once shown, the one thing left to do with it is paste it into an agent's
+                    // config, and a long monospaced string is fiddly to select by hand.
+                    if let token {
+                        Button {
+                            UIPasteboard.general.string = token
+                            withAnimation(.easeInOut(duration: 0.2)) { copiedToken = true }
+                            Task {
+                                try? await Task.sleep(for: .seconds(2))
+                                withAnimation(.easeInOut(duration: 0.2)) { copiedToken = false }
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: copiedToken ? "checkmark" : "doc.on.doc")
+                                    .accessibilityHidden(true)
+                                Text(copiedToken ? "Copied" : "Copy token")
+                            }
+                            .font(Typeface.body(15, .medium))
+                        }
+                        .tint(Palette.accent)
+                        .accessibilityLabel(copiedToken ? "Access token copied" : "Copy access token")
+                    } else {
+                        Button("Reveal token") { Task { await loadToken() } }
+                    }
+                    Button("Regenerate", role: .destructive) { confirmRegenerate = true }
                 } header: {
                     Text("MCP access token")
                         .accessibilityAddTraits(.isHeader)
@@ -195,6 +219,13 @@ struct AccountView: View {
             } message: {
                 Text("This permanently deletes your account and all of its data. It cannot be undone. "
                      + "Enter your password to confirm.")
+            }
+            // Regenerating cuts off every agent using the current token at once, so ask first.
+            .alert("Regenerate access token?", isPresented: $confirmRegenerate) {
+                Button("Cancel", role: .cancel) {}
+                Button("Regenerate", role: .destructive) { Task { await regenerate() } }
+            } message: {
+                Text("Agents using the current token, like Claude Code, lose access until you give them the new one.")
             }
             .alert("Could not delete account", isPresented: Binding(
                 get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {

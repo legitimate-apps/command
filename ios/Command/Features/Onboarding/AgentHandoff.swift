@@ -155,7 +155,7 @@ enum AgentHandoff {
         ## Connect Claude Code (MCP)
         - Endpoint: \(server)/mcp (Streamable HTTP)
         - Auth header: Authorization: Bearer \(tokenPlaceholder)
-        - The token is in the app: Account → MCP access token → Reveal token. It gives access to \
+        - The token is in the app: Account → MCP access token → Reveal token → Copy token. It gives access to \
         exactly one account; regenerating it there revokes the old one.
         - Claude Code:
           claude mcp add --transport http command \(server)/mcp --header "Authorization: Bearer \(tokenPlaceholder)"

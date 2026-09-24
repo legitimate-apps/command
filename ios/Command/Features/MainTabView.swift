@@ -60,7 +60,7 @@ struct MainTabView: View {
             if let name = UserDefaults.standard.string(forKey: "COMMAND_FIRE_INTENT") {
                 let map: [String: AppCommandBus.Intent] = [
                     "newNote": .newNote, "newAssignment": .newAssignment, "newChat": .newChat,
-                    "capture": .capture, "find": .find,
+                    "capture": .capture, "find": .find, "account": .go(.account),
                 ]
                 if let intent = map[name] {
                     Task { @MainActor in
