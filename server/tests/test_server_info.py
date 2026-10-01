@@ -90,7 +90,7 @@ def test_info_exact_shape_on_a_fresh_self_hosted_server(make_client) -> None:
         "registration_open": True,
         "ai": {"configured": False, "requires_subscription": False, "key_settable": True},
     }
-    assert __version__ == "1.1.0"
+    assert __version__ == "1.2.0"
 
 
 def test_self_hosted_registration_closes_once_the_owner_exists(make_client) -> None:
