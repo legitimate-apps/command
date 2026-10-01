@@ -21,20 +21,22 @@ import Observation
 
 @MainActor
 @Observable
-final class NoteSaver {
+final class NoteSaver: Identifiable {
+    /// Identity of this editing session, retained across presentations and create retries.
+    let id = UUID()
     enum State: Equatable { case idle, saving, saved, failed(String) }
 
     /// The two server operations a save needs, supplied per call (the view builds them from its
     /// environment's store + client; tests supply fakes). Both throw on failure.
     struct Ops {
         /// Create a note from (title, full text); returns its id.
-        var create: @MainActor (_ title: String?, _ body: String) async throws -> Int
+        var create: @MainActor (_ title: String?, _ body: String, _ key: UUID) async throws -> Int
         /// Update note `id` with (title, full text).
         var update: @MainActor (_ id: Int, _ title: String, _ body: String) async throws -> Void
     }
 
     /// The editor's current text. The view writes every keystroke here; a save always sends the
-    /// value current when it STARTS, never a stale snapshot captured while it was queued.
+    /// latest value when an update STARTS; an uncertain create first replays its original payload.
     var text: String
     private(set) var noteId: Int?
     private(set) var state: State = .idle
@@ -42,6 +44,9 @@ final class NoteSaver {
     private(set) var lastSavedText: String
 
     private var inFlight: Task<Bool, Never>?
+    /// A lost response may follow a committed POST. Retry its exact payload and key, then PATCH
+    /// any newer text. This also supports servers that require identical replay payloads.
+    private var createPayload: (title: String?, body: String)?
 
     init(noteId: Int?, text: String) {
         self.noteId = noteId
@@ -72,17 +77,22 @@ final class NoteSaver {
             if inFlight == running { inFlight = nil }
         }
         guard hasUnsavedChanges else { return true }
-        let full = text
+        let id = noteId
+        if id == nil, createPayload == nil {
+            let title = Note.firstLine(of: text)
+            createPayload = (title.isEmpty ? nil : title, text)
+        }
+        let full = id == nil ? createPayload!.body : text
         let trimmed = full.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = Note.firstLine(of: full)
-        let id = noteId
         state = .saving
         let task = Task { @MainActor () -> Bool in
             do {
                 if let id {
                     try await ops.update(id, title, full)
                 } else {
-                    self.noteId = try await ops.create(title.isEmpty ? nil : title, full)
+                    self.noteId = try await ops.create(createPayload?.title, full, self.id)
+                    self.createPayload = nil
                 }
                 self.lastSavedText = trimmed
                 self.state = .saved

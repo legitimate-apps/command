@@ -9,7 +9,7 @@ struct NotesView: View {
     @Environment(AppState.self) private var app
     @Environment(\.navigator) private var nav
     @State private var selectedNote: Note?
-    @State private var composing = false
+    @Environment(NoteComposer.self) private var composer
     @State private var searchText = ""
     @State private var searchActive = false   // search field is hidden until the 🔍 button reveals it
     @State private var confirmDiscardUnsaved = false
@@ -59,7 +59,7 @@ struct NotesView: View {
                     .disabled(app.notes.notes.isEmpty)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { composing = true } label: {
+                    Button { composer.begin() } label: {
                         Image(systemName: "plus").font(.system(size: 17, weight: .semibold))
                     }
                     .tint(Palette.accent)
@@ -69,12 +69,11 @@ struct NotesView: View {
             .task { await app.notes.load(client: app.client) }
             .refreshable { await app.notes.load(client: app.client) }
             .sheet(item: $selectedNote) { NoteDetailView(note: $0).macSheet(.page).privacyChallenge() }
-            .sheet(isPresented: $composing) { NoteDetailView().macSheet(.page) }
             // ⌘N / "New Note" from the Mac/iPad menu opens the composer. `initial: true` so a
             // cross-section ⌘N (which show(.notes) mounts this view fresh with the flag already
             // set) still consumes it — plain onChange skips the value present at mount.
             .onChange(of: nav?.composeNote, initial: true) { _, want in
-                if want == true { composing = true; nav?.composeNote = false }
+                if want == true { composer.begin(); nav?.composeNote = false }
             }
             // ⌘F / "Find" reveals the hidden search field.
             .onChange(of: nav?.focusSearch, initial: true) { _, want in
@@ -176,7 +175,7 @@ struct NotesView: View {
             title: "Nothing jotted yet",
             message: "Capture a quick thought on the Calendar tab — typed or spoken — or start a longer one here.",
             actionLabel: "New note"
-        ) { composing = true }
+        ) { composer.begin() }
     }
 }
 

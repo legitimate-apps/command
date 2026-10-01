@@ -22,11 +22,14 @@ final class NotesStore {
     /// another note selected in the detail column). Parked here — never dropped — until a retry
     /// lands or the user explicitly discards them; the Notes list surfaces them.
     var unsavedEdits: [UnsavedNoteEdit] = []
+    private(set) var isRetrying = false
 
     struct UnsavedNoteEdit: Identifiable, Equatable {
-        let id = UUID()
-        let noteId: Int?
-        let text: String
+        let saver: NoteSaver
+        var id: UUID { saver.id }
+        @MainActor var noteId: Int? { saver.noteId }
+        @MainActor var text: String { saver.text }
+        static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
     }
 
     func load(client: APIClient) async {
@@ -46,14 +49,16 @@ final class NotesStore {
     /// Save the current draft as a typed note. Returns true on success.
     @discardableResult
     func saveDraft(hidden: Bool = false, client: APIClient) async -> Bool {
-        let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isSaving else { return false }
+        let sentDraft = draft
+        let body = sentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return false }
         isSaving = true
         defer { isSaving = false }
         do {
             let note = try await client.createNote(body: body, source: "typed", hidden: hidden)
-            notes.insert(note, at: 0)
-            draft = ""
+            insertCreated(note)
+            if draft == sentDraft { draft = "" }
             errorMessage = nil
             pollTitleIfNeeded(note, client: client)
             return true
@@ -66,12 +71,12 @@ final class NotesStore {
     /// Create a note from the comprehensive composer (the + button) and put it at the
     /// top of the list. A nil title lets the server generate one (AI titling).
     @discardableResult
-    func create(title: String?, body: String, client: APIClient) async -> Note? {
+    func create(title: String?, body: String, idempotencyKey: UUID? = nil, client: APIClient) async -> Note? {
         let b = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !b.isEmpty else { return nil }
         do {
-            let note = try await client.createNote(body: b, source: "typed", title: title)
-            notes.insert(note, at: 0)
+            let note = try await client.createNote(body: b, source: "typed", title: title, idempotencyKey: idempotencyKey?.uuidString)
+            insertCreated(note)
             errorMessage = nil
             pollTitleIfNeeded(note, client: client)
             return note
@@ -89,7 +94,7 @@ final class NotesStore {
         guard !body.isEmpty else { return false }
         do {
             let note = try await client.createNote(body: body, source: "voice", engine: engine, locale: locale)
-            notes.insert(note, at: 0)
+            insertCreated(note)
             errorMessage = nil
             pollTitleIfNeeded(note, client: client)
             return true
@@ -97,6 +102,13 @@ final class NotesStore {
             errorMessage = describe(error)
             return false
         }
+    }
+
+    /// A load can observe the committed POST before its response reaches us. Merge by id so
+    /// SwiftUI never receives two rows with the same identity.
+    private func insertCreated(_ note: Note) {
+        notes.removeAll { $0.id == note.id }
+        notes.insert(note, at: 0)
     }
 
     /// Replace a note in the list in place (keeps the list reactive after an edit).
@@ -185,7 +197,7 @@ final class NotesStore {
     func duplicate(title: String, body: String, client: APIClient) async -> Note? {
         do {
             let note = try await client.createNote(body: body, source: "typed", title: title)
-            notes.insert(note, at: 0); errorMessage = nil; return note
+            insertCreated(note); errorMessage = nil; return note
         } catch {
             errorMessage = describe(error); return nil
         }
@@ -194,21 +206,38 @@ final class NotesStore {
     /// Keep an edit the closing editor couldn't save. A newer edit of the same note replaces the
     /// older one (it contains it — the editor holds the whole note).
     func park(noteId: Int?, text: String) {
-        if let noteId { unsavedEdits.removeAll { $0.noteId == noteId } }
-        unsavedEdits.append(UnsavedNoteEdit(noteId: noteId, text: text))
+        let saver = NoteSaver(noteId: noteId, text: "")
+        saver.text = text
+        park(saver: saver)
     }
 
-    /// Retry every parked edit; the ones that still fail stay parked.
+    /// Retain the original saver, including a successful create followed by a failed PATCH,
+    /// and its stable session identity. Retrying must never manufacture a fresh create owner.
+    func park(saver: NoteSaver) {
+        unsavedEdits.removeAll { $0.id == saver.id || (saver.noteId != nil && $0.noteId == saver.noteId) }
+        unsavedEdits.append(UnsavedNoteEdit(saver: saver))
+    }
+
+    /// Only one retry pass runs at a time. Edits parked during a
+    /// retry remain in the queue. Only the exact session successfully flushed is removed.
     func retryUnsavedEdits(client: APIClient) async {
+        guard !isRetrying else { return }
+        isRetrying = true
+        defer { isRetrying = false }
         for edit in unsavedEdits {
-            let title = Note.firstLine(of: edit.text)
-            let saved: Note?
-            if let id = edit.noteId {
-                saved = await update(id: id, title: title, body: edit.text, client: client)
-            } else {
-                saved = await create(title: title.isEmpty ? nil : title, body: edit.text, client: client)
-            }
-            if saved != nil { unsavedEdits.removeAll { $0.id == edit.id } }
+            let ops = NoteSaver.Ops(
+                create: { title, body, key in
+                    guard let note = await self.create(title: title, body: body, idempotencyKey: key, client: client) else {
+                        throw NoteSaveError(message: self.errorMessage)
+                    }
+                    return note.id
+                },
+                update: { id, title, body in
+                    guard await self.update(id: id, title: title, body: body, client: client) != nil else {
+                        throw NoteSaveError(message: self.errorMessage)
+                    }
+                })
+            if await edit.saver.flush(using: ops) { unsavedEdits.removeAll { $0.id == edit.id } }
         }
     }
 

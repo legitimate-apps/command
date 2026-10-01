@@ -227,9 +227,11 @@ final class APIClient {
 
     @discardableResult
     func createNote(body: String, source: String = "typed", engine: String? = nil,
-                    locale: String? = nil, title: String? = nil, hidden: Bool = false) async throws -> Note {
+                    locale: String? = nil, title: String? = nil, hidden: Bool = false,
+                    idempotencyKey: String? = nil) async throws -> Note {
         try await postJSON("/api/notes",
-                           NoteCreateBody(body: body, source: source, engine: engine, locale: locale, title: title, hidden: hidden)).decoded()
+                           NoteCreateBody(body: body, source: source, engine: engine, locale: locale, title: title, hidden: hidden),
+                           idempotencyKey: idempotencyKey).decoded()
     }
 
     func getNote(id: Int) async throws -> Note {
@@ -857,11 +859,12 @@ final class APIClient {
         return try await send(req)
     }
 
-    private func postJSON(_ path: String, _ body: some Encodable) async throws -> Data {
+    private func postJSON(_ path: String, _ body: some Encodable, idempotencyKey: String? = nil) async throws -> Data {
         var req = URLRequest(url: makeURL(path, query: []))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try Self.encoder.encode(body)
+        if let idempotencyKey { req.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key") }
         return try await send(req)
     }
 

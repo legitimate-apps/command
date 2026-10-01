@@ -14,8 +14,17 @@ import SwiftUI
 struct AdaptiveRootView: View {
     @Environment(AppState.self) private var app
     @Environment(\.horizontalSizeClass) private var hSize
+    @State private var composer = NoteComposer()
 
     var body: some View {
+        shell
+            .environment(composer)
+            .sheet(item: Bindable(composer).session) { session in
+                NoteDetailView(session: session).macSheet(.page)
+            }
+    }
+
+    @ViewBuilder private var shell: some View {
         #if targetEnvironment(macCatalyst)
         // On the Mac the shell is ALWAYS the three-column split — a Mac window is never a
         // phone, and NavigationSplitView collapses to a single column on its own when the

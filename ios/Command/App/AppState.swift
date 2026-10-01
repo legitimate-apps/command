@@ -183,15 +183,15 @@ final class AppState {
     /// Whether a server has been chosen yet. Drives `.needsServer`.
     var hasServer: Bool { !serverURLString.trimmingCharacters(in: .whitespaces).isEmpty }
 
-    init() {
+    init(client: APIClient? = nil) {
         Self.migrateLegacyServerURL(UserDefaults.standard)
-        let saved = UserDefaults.standard.string(forKey: Self.urlKey) ?? Self.defaultServerURL
+        let saved = client?.baseURL.absoluteString ?? UserDefaults.standard.string(forKey: Self.urlKey) ?? Self.defaultServerURL
         serverURLString = saved
         hiddenRevealMode = UserDefaults.standard.string(forKey: Self.hiddenModeKey)
             .flatMap(HiddenRevealMode.init(rawValue:)) ?? .keepHidden
         // With no server configured the client is a placeholder that is never called — the app
         // is routed to onboarding before anything can use it.
-        client = APIClient(baseURL: URL(string: saved) ?? URL(string: "https://unconfigured.invalid")!)
+        self.client = client ?? APIClient(baseURL: URL(string: saved) ?? URL(string: "https://unconfigured.invalid")!)
         sessionMode = UserDefaults.standard.string(forKey: Self.sessionModeKey)
             .flatMap(SessionMode.init(rawValue:))
         if let data = UserDefaults.standard.data(forKey: Self.myProfileKey) {

@@ -56,10 +56,10 @@ struct NoteDetailView: View {
     /// `note == nil` opens the composer for a brand-new note (the + button). `inDetailColumn` is
     /// set by the iPad/Mac detail-column host so "Done"/delete clear the selection instead of
     /// calling the inert `dismiss()`.
-    init(note: Note? = nil, inDetailColumn: Bool = false) {
+    init(note: Note? = nil, inDetailColumn: Bool = false, session: NoteSaver? = nil) {
         self.initialNote = note
         self.inDetailColumn = inDetailColumn
-        _saver = State(initialValue: NoteSaver(noteId: note?.id, text: Self.combined(note)))
+        _saver = State(initialValue: session ?? NoteSaver(noteId: note?.id, text: Self.combined(note)))
     }
 
     /// Reconstruct the single-field text from a note losslessly. Body holds the full content; a
@@ -83,8 +83,8 @@ struct NoteDetailView: View {
     private var saveOps: NoteSaver.Ops {
         let store = store, client = client
         return NoteSaver.Ops(
-            create: { title, body in
-                guard let note = await store.create(title: title, body: body, client: client) else {
+            create: { title, body, key in
+                guard let note = await store.create(title: title, body: body, idempotencyKey: key, client: client) else {
                     throw NoteSaveError(message: store.errorMessage)
                 }
                 return note.id
@@ -410,7 +410,7 @@ struct NoteDetailView: View {
         saveTask = Task {
             try? await Task.sleep(for: .milliseconds(700))
             if Task.isCancelled { return }
-            await saver.save(using: saveOps)
+            await saver.flush(using: saveOps)
         }
     }
 
@@ -435,6 +435,8 @@ struct NoteDetailView: View {
     /// The editor went away without a Close (sheet swiped down, another note selected in the
     /// detail column, section switched). Save what's pending; if that fails the view is already
     /// gone, so park the text on the store (the Notes list offers Retry) rather than lose it.
+    /// Do not dismiss here: a replacement editor may already occupy the presentation by the
+    /// time this asynchronous work completes. Explicit Close still dismisses in finish().
     private func finishOnDisappear() {
         guard !finished else { return }
         finished = true
@@ -442,16 +444,15 @@ struct NoteDetailView: View {
         Task {
             if await saver.flush(using: saveOps) {
                 if let id = noteId { await store.close(id: id, client: client) }
-                close()
             } else {
-                store.park(noteId: saver.noteId, text: saver.text)
+                store.park(saver: saver)
             }
         }
     }
 
     private func retrySave() {
         saveTask?.cancel()
-        if closeBlocked { finish() } else { Task { await saver.save(using: saveOps) } }
+        if closeBlocked { finish() } else { Task { await saver.flush(using: saveOps) } }
     }
 
     /// The user confirmed dropping the unsaved edits: close without saving. An existing note keeps
