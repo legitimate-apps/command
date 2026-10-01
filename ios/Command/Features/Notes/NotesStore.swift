@@ -34,17 +34,68 @@ final class NotesStore {
         static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
     }
 
+    /// The current editor owner also covers its asynchronous disappearance flush. Reopening
+    /// before that flush finishes takes over the same saver; a late old owner cannot park it.
+    private var editors: [UUID: (saver: NoteSaver, owners: Set<UUID>)] = [:]
+
+    func resumeEditor(saver fallback: NoteSaver, owner: UUID) -> NoteSaver {
+        let matches: (NoteSaver) -> Bool = {
+            $0.id == fallback.id || (fallback.noteId != nil && $0.noteId == fallback.noteId)
+        }
+        let saver = editors.values.first { matches($0.saver) }?.saver
+            ?? unsavedEdits.first { matches($0.saver) }?.saver ?? fallback
+        unsavedEdits.removeAll { $0.id == saver.id }
+        var owners = editors[saver.id]?.owners ?? []
+        owners.insert(owner)
+        editors[saver.id] = (saver, owners)
+        return saver
+    }
+
+    func releaseEditor(saver: NoteSaver, owner: UUID, park shouldPark: Bool) {
+        guard var editor = editors[saver.id], editor.owners.remove(owner) != nil else { return }
+        if !editor.owners.isEmpty { editors[saver.id] = editor; return }
+        editors.removeValue(forKey: saver.id)
+        if shouldPark { park(saver: saver) }
+    }
+
+    private var mutationVersion = 0
+    private var activeLoads: [UUID: Int] = [:]
+    private var localMutations: [Int: (version: Int, note: Note?)] = [:]
+    private var latestLoad: UUID?
+
+    private func recordMutation(id: Int, note: Note?) {
+        mutationVersion += 1
+        if !activeLoads.isEmpty { localMutations[id] = (mutationVersion, note) }
+    }
+
     func load(client: APIClient) async {
+        let token = UUID(), startedAt = mutationVersion
+        latestLoad = token; activeLoads[token] = startedAt
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            activeLoads.removeValue(forKey: token)
+            isLoading = !activeLoads.isEmpty
+            if let oldest = activeLoads.values.min() {
+                localMutations = localMutations.filter { $0.value.version > oldest }
+            } else { localMutations.removeAll() }
+        }
         do {
-            let fresh = try await client.drainAll { limit, cursor in
+            var fresh = try await client.drainAll { limit, cursor in
                 try await client.searchNotes(limit: limit, cursor: cursor)
+            }
+            guard latestLoad == token else { return }
+            // Overlay successful local writes newer than this GET. A nil mutation is an
+            // archive tombstone, so an old snapshot cannot bring a removed row back.
+            for (id, mutation) in localMutations.sorted(by: { $0.value.version < $1.value.version }) where mutation.version > startedAt {
+                if let note = mutation.note {
+                    if let index = fresh.firstIndex(where: { $0.id == id }) { fresh[index] = note }
+                    else { fresh.insert(note, at: 0) }
+                } else { fresh.removeAll { $0.id == id } }
             }
             withAnimation(.snappy) { notes = fresh }
             errorMessage = nil
         } catch {
-            errorMessage = describe(error)
+            if latestLoad == token { errorMessage = describe(error) }
         }
     }
 
@@ -112,13 +163,17 @@ final class NotesStore {
     /// A load can observe the committed POST before its response reaches us. Merge by id so
     /// SwiftUI never receives two rows with the same identity.
     private func insertCreated(_ note: Note) {
+        recordMutation(id: note.id, note: note)
         notes.removeAll { $0.id == note.id }
         notes.insert(note, at: 0)
     }
 
     /// Replace a note in the list in place (keeps the list reactive after an edit).
     private func replace(_ note: Note) {
-        if let i = notes.firstIndex(where: { $0.id == note.id }) { notes[i] = note }
+        if let i = notes.firstIndex(where: { $0.id == note.id }) {
+            notes[i] = note
+            recordMutation(id: note.id, note: note)
+        }
     }
 
     /// Patch title and/or body, syncing the row.
@@ -147,6 +202,7 @@ final class NotesStore {
     func archive(id: Int, client: APIClient) async {
         do {
             _ = try await client.archiveNote(id: id, archived: true)
+            recordMutation(id: id, note: nil)
             notes.removeAll { $0.id == id }
             errorMessage = nil
         } catch {
@@ -222,6 +278,7 @@ final class NotesStore {
         isRetrying = true
         defer { isRetrying = false }
         for edit in unsavedEdits {
+            guard unsavedEdits.contains(where: { $0.id == edit.id }) else { continue }
             let ops = NoteSaver.Ops(
                 create: { title, body, key in
                     guard let note = await self.create(title: title, body: body, idempotencyKey: key, client: client) else {
@@ -238,7 +295,10 @@ final class NotesStore {
         }
     }
 
-    func discardUnsavedEdits() { unsavedEdits.removeAll() }
+    func discardUnsavedEdits() {
+        guard !isRetrying else { return }
+        unsavedEdits.removeAll()
+    }
 
     private func describe(_ error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

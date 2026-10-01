@@ -12,6 +12,13 @@ final class NoteComposer {
     private var presenter: UUID?
     private var visibleSession: UUID?
 
+    func resume(_ saver: NoteSaver) {
+        guard session == nil else { return }
+        session = saver
+        visibleSession = nil
+        presenter = hosts.last
+    }
+
     func begin() {
         guard session == nil else { return }
         session = NoteSaver(noteId: nil, text: "")

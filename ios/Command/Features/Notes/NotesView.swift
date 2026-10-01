@@ -137,18 +137,28 @@ struct NotesView: View {
                 .font(Typeface.body(13))
                 .foregroundStyle(Palette.ink)
             Spacer(minLength: 8)
+            Button("Review") {
+                if let edit = app.notes.unsavedEdits.first {
+                    if let note = app.notes.notes.first(where: { $0.id == edit.noteId }) { open(note) }
+                    else { composer.resume(edit.saver) }
+                }
+            }
+                .font(Typeface.body(13, .semibold))
+                .disabled(app.notes.isRetrying)
             Button("Discard", role: .destructive) { confirmDiscardUnsaved = true }
                 .font(Typeface.body(13, .semibold))
             Button("Retry") { Task { await app.notes.retryUnsavedEdits(client: app.client) } }
                 .font(Typeface.body(13, .semibold))
                 .tint(Palette.accent)
         }
+        .disabled(app.notes.isRetrying)
         .padding(12)
         .background(Palette.danger.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .confirmationDialog("Discard unsaved edits?", isPresented: $confirmDiscardUnsaved, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { app.notes.discardUnsavedEdits() }
+                .disabled(app.notes.isRetrying)
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("These edits never reached the server and will be lost.")

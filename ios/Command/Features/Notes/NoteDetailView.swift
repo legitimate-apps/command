@@ -30,6 +30,8 @@ struct NoteDetailView: View {
     @State private var saver: NoteSaver
     @State private var saveTask: Task<Void, Never>?
     @State private var finished = false
+    @State private var editorOwner = UUID()
+    @State private var registeredEditor = false
     /// Set when a Close couldn't save: the editor stays open with Retry / Discard instead of
     /// closing over the unsaved text.
     @State private var closeBlocked = false
@@ -184,14 +186,16 @@ struct NoteDetailView: View {
                 // mid-compose restart never loses work — the debounce Task doesn't survive suspension.
                 if phase != .active { saveTask?.cancel(); Task { _ = await saver.flush(using: saveOps) } }
             }
-            // A sheet can't be swiped away while its last save failed — the Retry / Discard banner
-            // is the way out, so unsaved text is never silently dropped.
-            .interactiveDismissDisabled(saver.isFailed)
             .confirmationDialog("Discard unsaved changes?", isPresented: $showDiscard, titleVisibility: .visible) {
                 Button("Discard", role: .destructive) { discardAndClose() }
                 Button("Keep Editing", role: .cancel) {}
             } message: {
                 Text("Your latest edits to this note haven't been saved.")
+            }
+            .onAppear {
+                guard !registeredEditor else { return }
+                saver = store.resumeEditor(saver: saver, owner: editorOwner)
+                registeredEditor = true
             }
             .onDisappear { finishOnDisappear() }
             .task {
@@ -424,6 +428,7 @@ struct NoteDetailView: View {
             if await saver.flush(using: saveOps) {
                 closeBlocked = false
                 if let id = noteId { await store.close(id: id, client: client) }   // snapshot backup + refresh
+                store.releaseEditor(saver: saver, owner: editorOwner, park: false)
                 close()
             } else {
                 finished = false
@@ -444,8 +449,9 @@ struct NoteDetailView: View {
         Task {
             if await saver.flush(using: saveOps) {
                 if let id = noteId { await store.close(id: id, client: client) }
+                store.releaseEditor(saver: saver, owner: editorOwner, park: false)
             } else {
-                store.park(saver: saver)
+                store.releaseEditor(saver: saver, owner: editorOwner, park: true)
             }
         }
     }
@@ -460,6 +466,7 @@ struct NoteDetailView: View {
     private func discardAndClose() {
         finished = true
         saveTask?.cancel()
+        store.releaseEditor(saver: saver, owner: editorOwner, park: false)
         close()
     }
 
@@ -477,6 +484,8 @@ struct NoteDetailView: View {
 
     private func deleteNote() {
         finished = true  // skip the auto-save/close path; we're archiving
+        saveTask?.cancel()
+        store.releaseEditor(saver: saver, owner: editorOwner, park: false)
         guard let id = noteId else { close(); return }
         Haptics.delete()
         Task { await store.archive(id: id, client: client) }
