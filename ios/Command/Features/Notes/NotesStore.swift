@@ -14,7 +14,9 @@ import SwiftUI
 @Observable
 final class NotesStore {
     var notes: [Note] = []
-    var draft = ""
+    var draft = "" { didSet { if draft != oldValue { draftCreate.reset() } } }
+    private var draftCreate = CreateAttempt()
+    private struct DraftPayload: Encodable { let body: String; let hidden: Bool }
     var isLoading = false
     var isSaving = false
     var errorMessage: String?
@@ -56,7 +58,10 @@ final class NotesStore {
         isSaving = true
         defer { isSaving = false }
         do {
-            let note = try await client.createNote(body: body, source: "typed", hidden: hidden)
+            let payload = DraftPayload(body: body, hidden: hidden)
+            let key = try draftCreate.key(for: payload)
+            let note = try await client.createNote(body: body, source: "typed", hidden: hidden, idempotencyKey: key)
+            draftCreate.succeeded(key: key)
             insertCreated(note)
             if draft == sentDraft { draft = "" }
             errorMessage = nil
@@ -71,11 +76,11 @@ final class NotesStore {
     /// Create a note from the comprehensive composer (the + button) and put it at the
     /// top of the list. A nil title lets the server generate one (AI titling).
     @discardableResult
-    func create(title: String?, body: String, idempotencyKey: UUID? = nil, client: APIClient) async -> Note? {
+    func create(title: String?, body: String, idempotencyKey: UUID = UUID(), client: APIClient) async -> Note? {
         let b = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !b.isEmpty else { return nil }
         do {
-            let note = try await client.createNote(body: b, source: "typed", title: title, idempotencyKey: idempotencyKey?.uuidString)
+            let note = try await client.createNote(body: b, source: "typed", title: title, idempotencyKey: idempotencyKey.uuidString)
             insertCreated(note)
             errorMessage = nil
             pollTitleIfNeeded(note, client: client)
@@ -89,11 +94,11 @@ final class NotesStore {
     /// Save a transcribed voice note. Returns true once it's on the server; false (with
     /// `errorMessage` set) otherwise, so the recording sheet can keep the transcript for a retry.
     @discardableResult
-    func saveVoiceNote(_ text: String, engine: String, locale: String?, client: APIClient) async -> Bool {
+    func saveVoiceNote(_ text: String, engine: String, locale: String?, idempotencyKey: String = UUID().uuidString, client: APIClient) async -> Bool {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return false }
         do {
-            let note = try await client.createNote(body: body, source: "voice", engine: engine, locale: locale)
+            let note = try await client.createNote(body: body, source: "voice", engine: engine, locale: locale, idempotencyKey: idempotencyKey)
             insertCreated(note)
             errorMessage = nil
             pollTitleIfNeeded(note, client: client)
@@ -201,14 +206,6 @@ final class NotesStore {
         } catch {
             errorMessage = describe(error); return nil
         }
-    }
-
-    /// Keep an edit the closing editor couldn't save. A newer edit of the same note replaces the
-    /// older one (it contains it — the editor holds the whole note).
-    func park(noteId: Int?, text: String) {
-        let saver = NoteSaver(noteId: noteId, text: "")
-        saver.text = text
-        park(saver: saver)
     }
 
     /// Retain the original saver, including a successful create followed by a failed PATCH,

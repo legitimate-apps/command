@@ -228,7 +228,7 @@ final class APIClient {
     @discardableResult
     func createNote(body: String, source: String = "typed", engine: String? = nil,
                     locale: String? = nil, title: String? = nil, hidden: Bool = false,
-                    idempotencyKey: String? = nil) async throws -> Note {
+                    idempotencyKey: String = UUID().uuidString) async throws -> Note {
         try await postJSON("/api/notes",
                            NoteCreateBody(body: body, source: source, engine: engine, locale: locale, title: title, hidden: hidden),
                            idempotencyKey: idempotencyKey).decoded()
@@ -428,8 +428,8 @@ final class APIClient {
     }
 
     @discardableResult
-    func createAssignment(_ body: AssignmentCreateBody) async throws -> Assignment {
-        try await postJSON("/api/assignments", body).decoded()
+    func createAssignment(_ body: AssignmentCreateBody, idempotencyKey: String = UUID().uuidString) async throws -> Assignment {
+        try await postJSON("/api/assignments", body, idempotencyKey: idempotencyKey).decoded()
     }
 
     @discardableResult
@@ -560,8 +560,8 @@ final class APIClient {
     }
 
     @discardableResult
-    func createActivity(_ body: ActivityCreateBody) async throws -> Activity {
-        try await postJSON("/api/activities", body).decoded()
+    func createActivity(_ body: ActivityCreateBody, idempotencyKey: String = UUID().uuidString) async throws -> Activity {
+        try await postJSON("/api/activities", body, idempotencyKey: idempotencyKey).decoded()
     }
 
     @discardableResult
@@ -865,7 +865,26 @@ final class APIClient {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try Self.encoder.encode(body)
         if let idempotencyKey { req.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key") }
-        return try await send(req)
+        // Only keyed creates are replayable. HTTP errors and permanent URL errors go straight
+        // to the caller; a transient transport failure gets at most two bounded retries.
+        var retries = 0
+        while true {
+            do { return try await send(req) }
+            catch {
+                guard idempotencyKey != nil, retries < 2,
+                      let transport = error as? URLError, Self.isTransient(transport) else { throw error }
+                retries += 1
+                try await Task.sleep(for: .milliseconds(retries == 1 ? 200 : 500))
+            }
+        }
+    }
+
+    private static func isTransient(_ error: URLError) -> Bool {
+        switch error.code {
+        case .networkConnectionLost, .timedOut, .cannotConnectToHost, .cannotFindHost,
+             .dnsLookupFailed, .notConnectedToInternet: return true
+        default: return false
+        }
     }
 
     private func patchJSON(_ path: String, _ body: some Encodable) async throws -> Data {

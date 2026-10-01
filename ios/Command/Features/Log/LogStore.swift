@@ -17,7 +17,8 @@ final class LogStore {
     var activities: [Activity] = []
     var actors: [Delegatee] = []          // includes the "Me" actor (is_self)
     var summary: [ActivitySummaryRow] = []
-    var draft = ""                        // quick-log text in the capture bar
+    var draft = "" { didSet { if draft != oldValue { draftCreate.reset() } } }
+    private var draftCreate = CreateAttempt()
     var composeActorId: Int?              // who the next quick-log is attributed to (nil = Me)
     var occurredAt = Date()               // when the fact happened — synced to the selected calendar day
     var isLoading = false
@@ -83,16 +84,21 @@ final class LogStore {
     /// Log the capture-bar draft as a fact (attributed to the chosen actor, on `occurredAt`).
     @discardableResult
     func logDraft(hidden: Bool = false, client: APIClient) async -> Bool {
-        let title = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isSaving else { return false }
+        let sentDraft = draft
+        let title = sentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return false }
         isSaving = true
         defer { isSaving = false }
         do {
-            let activity = try await client.createActivity(
-                ActivityCreateBody(title: title, actorId: composeActorId,
-                                   occurredAt: Self.iso(occurredAt), hidden: hidden))
+            let body = ActivityCreateBody(title: title, actorId: composeActorId,
+                                          occurredAt: Self.iso(occurredAt), hidden: hidden)
+            let key = try draftCreate.key(for: body)
+            let activity = try await client.createActivity(body, idempotencyKey: key)
+            draftCreate.succeeded(key: key)
+            activities.removeAll { $0.id == activity.id }
             activities.insert(activity, at: 0)
-            draft = ""
+            if draft == sentDraft { draft = "" }
             errorMessage = nil
             await refreshSummary(client: client)
             return true

@@ -28,6 +28,8 @@ struct CreateAssignmentSheet: View {
     /// nil = inherit the assignee's notice window (or fire at the scheduled time when unassigned).
     @State private var leadMinutes: Int?
     @State private var saving = false
+    @State private var createAttempt = CreateAttempt()
+    private struct Submission: Encodable { let body: AssignmentCreateBody; let assignee: String? }
     @State private var errorMessage: String?
 
     /// States when the reminder actually lands — the same wording (and the same helper) the detail
@@ -223,14 +225,17 @@ struct CreateAssignmentSheet: View {
                         .fixedSize()
                 }
             }
+            .onChange(of: title) { _, _ in createAttempt.reset() }
+            .onChange(of: details) { _, _ in createAttempt.reset() }
             .sheet(isPresented: $showAssigneePicker) { AssigneePickerSheet(selection: $assignee).macSheet() }
             .sheet(isPresented: $showGoalPicker) { GoalPickerSheet(selection: $goal).macSheet() }
         }
     }
 
     private func save() {
+        guard !saving else { return }
+        saving = true
         Task {
-            saving = true
             defer { saving = false }
             var body = AssignmentCreateBody(title: title.trimmingCharacters(in: .whitespaces))
             let trimmedDetails = details.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -243,8 +248,13 @@ struct CreateAssignmentSheet: View {
             body.leadTimeMinutes = leadMinutes   // nil → server defaults it from the assignee
             body.timezone = TimeZone.current.identifier   // anchor recurrence to local wall-clock (DST-safe)
             errorMessage = nil
-            let (created, _) = await app.tasks.createAssignment(body, assigneeSlug: assignee?.slug, client: app.client)
+            let key: String
+            do { key = try createAttempt.key(for: Submission(body: body, assignee: assignee?.slug)) }
+            catch { errorMessage = error.localizedDescription; return }
+            let (created, _) = await app.tasks.createAssignment(body, assigneeSlug: assignee?.slug,
+                                                               idempotencyKey: key, client: app.client)
             if created != nil {
+                createAttempt.succeeded(key: key)
                 Haptics.success()
                 dismiss()
             } else {

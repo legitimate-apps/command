@@ -68,7 +68,7 @@ final class NoteSaver: Identifiable {
     /// save already in flight first. Returns false only if THIS attempt failed; true when it
     /// succeeded or there was nothing to save.
     @discardableResult
-    func save(using ops: Ops) async -> Bool {
+    func save(using ops: Ops, stopWhenCancelled: Bool = false) async -> Bool {
         // Whoever sees the running save finish clears it. Awaiting an already-finished task's value
         // needn't suspend, so looping on a stale `inFlight` until its owner resumed to clear it
         // could spin the main actor forever (the owner never got to run).
@@ -76,6 +76,7 @@ final class NoteSaver: Identifiable {
             _ = await running.value
             if inFlight == running { inFlight = nil }
         }
+        if stopWhenCancelled && Task.isCancelled { return !hasUnsavedChanges }
         guard hasUnsavedChanges else { return true }
         let id = noteId
         if id == nil, createPayload == nil {
@@ -106,6 +107,16 @@ final class NoteSaver: Identifiable {
         let ok = await task.value
         if inFlight == task { inFlight = nil }
         return ok
+    }
+
+    /// Debounce work owns the latest text only until another keystroke cancels its caller.
+    /// Keep an already-started save alive, but leave its follow-up to the newer debounce.
+    func autosave(using ops: Ops) async -> Bool {
+        while !Task.isCancelled {
+            guard await save(using: ops, stopWhenCancelled: true) else { return false }
+            if !hasUnsavedChanges { return true }
+        }
+        return !hasUnsavedChanges
     }
 
     /// Save until nothing unsaved remains (text typed during a save gets its own follow-up save).

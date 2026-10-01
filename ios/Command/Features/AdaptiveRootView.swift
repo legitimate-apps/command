@@ -17,11 +17,8 @@ struct AdaptiveRootView: View {
     @State private var composer = NoteComposer()
 
     var body: some View {
-        shell
+        shell.noteComposerHost()
             .environment(composer)
-            .sheet(item: Bindable(composer).session) { session in
-                NoteDetailView(session: session).macSheet(.page)
-            }
     }
 
     @ViewBuilder private var shell: some View {

@@ -45,7 +45,8 @@ enum RepeatRule: String, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class ScheduleStore {
-    var draft = ""                              // the event title typed in the capture bar
+    var draft = "" { didSet { if draft != oldValue { draftCreate.reset() } } }
+    private var draftCreate = CreateAttempt()
     var scheduledAt = ScheduleStore.nextHour()  // Date + Time, edited by the two pickers
     var repeats: RepeatRule = .never
     var assigneeId: Int?                        // who it's for (nil resolved to "Me" by the view)
@@ -65,7 +66,9 @@ final class ScheduleStore {
     /// Create the scheduled assignment. Returns true on success (caller reloads the calendar).
     @discardableResult
     func addToQueue(hidden: Bool = false, client: APIClient) async -> Bool {
-        let title = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sentDraft = draft
+        let sentRepeats = repeats
+        let title = sentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return false }
         guard !isSaving else { return false }   // a second tap while in flight would double-create
         isSaving = true
@@ -81,9 +84,13 @@ final class ScheduleStore {
             hidden: hidden
         )
         do {
-            _ = try await client.createAssignment(body)
-            draft = ""
-            repeats = .never
+            let key = try draftCreate.key(for: body)
+            _ = try await client.createAssignment(body, idempotencyKey: key)
+            draftCreate.succeeded(key: key)
+            if draft == sentDraft {
+                draft = ""
+                if repeats == sentRepeats { repeats = .never }
+            }
             errorMessage = nil
             return true
         } catch {

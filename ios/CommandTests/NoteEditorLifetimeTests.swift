@@ -61,6 +61,28 @@ private struct EditorHarness: View {
 }
 
 @MainActor
+@Observable
+private final class BlockingSheetPresentation {
+    var existing = false
+    let composer = NoteComposer()
+}
+
+private struct BlockingSheetHarness: View {
+    let presentation: BlockingSheetPresentation
+    var body: some View {
+        Text("Presentation test")
+            .sheet(isPresented: Bindable(presentation).existing) {
+                NoteDetailView(note: try! JSONDecoder().decode(Note.self, from: Data("""
+                {"id":42,"accountId":1,"body":"Existing","title":"Existing","titleStatus":"user",
+                "source":"typed","createdAt":"2026-10-01T00:00:00Z","updatedAt":"2026-10-01T00:00:00Z"}
+                """.utf8))).macSheet(.page)
+            }
+            .noteComposerHost()
+            .environment(presentation.composer)
+    }
+}
+
+@MainActor
 final class NoteEditorLifetimeTests: XCTestCase {
     private func wait(until predicate: () -> Bool) async {
         for _ in 0..<200 {
@@ -73,6 +95,38 @@ final class NoteEditorLifetimeTests: XCTestCase {
         if let text = view as? UITextView { return text }
         for child in view.subviews { if let text = textView(in: child) { return text } }
         return nil
+    }
+
+    func testNewNoteFromExistingSheetPresentsAndCanBeOpenedAgain() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [EditorWireProtocol.self]
+        let app = AppState(client: APIClient(baseURL: URL(string: "https://note-ui.invalid")!, configuration: config))
+        let presentation = BlockingSheetPresentation()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let host = UIHostingController(rootView: BlockingSheetHarness(presentation: presentation).environment(app))
+        let window = UIWindow(windowScene: scene); window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true; previous?.makeKey() }
+        await wait { host.view.window != nil }
+        presentation.existing = true
+        await wait { self.textView(in: host.presentedViewController?.view) != nil }
+        let existing = try XCTUnwrap(host.presentedViewController)
+        XCTAssertEqual(textView(in: existing.view)?.text, "Existing")
+        presentation.composer.begin() // the exact New Note model intent used by the keyboard
+        await wait { existing.presentedViewController != nil }
+        let compose = try XCTUnwrap(existing.presentedViewController, "New Note must present above the existing sheet")
+        await wait { self.textView(in: compose.view) != nil }
+        XCTAssertEqual(textView(in: compose.view)?.text, "")
+        presentation.composer.session = nil
+        await wait { existing.presentedViewController == nil }
+        XCTAssertTrue(presentation.existing)
+        presentation.existing = false
+        await wait { host.presentedViewController == nil }
+        presentation.composer.begin()
+        await wait { self.textView(in: host.presentedViewController?.view) != nil }
+        XCTAssertNotNil(textView(in: host.presentedViewController?.view), "dismissal must not leave a stuck session")
+        presentation.composer.session = nil
+        await wait { host.presentedViewController == nil }
     }
 
     /// Force a real SwiftUI identity replacement after the first create. The replacement must

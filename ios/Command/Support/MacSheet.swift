@@ -39,13 +39,15 @@ enum MacSheetSize {
 }
 
 extension View {
-    /// Give a sheet a usable size on Mac Catalyst. No-op on iOS and iPadOS.
+    /// Shared sheet-content boundary: give Catalyst usable sizing and register a New Note
+    /// presenter above the shell. Composer content opts out to avoid presenting itself.
     @ViewBuilder
-    func macSheet(_ size: MacSheetSize = .form) -> some View {
+    func macSheet(_ size: MacSheetSize = .form, hostsComposer: Bool = true) -> some View {
         #if targetEnvironment(macCatalyst)
         background(MacSheetSizer(size: size.cgSize).frame(width: 0, height: 0))
+            .noteComposerHost(enabled: hostsComposer)
         #else
-        self
+        noteComposerHost(enabled: hostsComposer)
         #endif
     }
 }

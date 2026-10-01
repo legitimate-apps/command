@@ -19,7 +19,9 @@ import Observation
 final class VoiceCaptureFlow {
     /// The finished recording, kept until it's committed or discarded.
     private(set) var audioURL: URL?
-    var transcript = ""
+    var transcript = "" { didSet { if transcript != oldValue { noteCreate.reset() } } }
+    private var noteCreate = CreateAttempt()
+    private struct NotePayload: Encodable { let text: String; let engine: String }
     private(set) var engineUsed = ""
     var errorMessage: String?
     /// The last transcription attempt failed (the recording is still kept for another attempt).
@@ -36,6 +38,7 @@ final class VoiceCaptureFlow {
     /// A new recording is starting: drop the previous one and any leftover review state.
     func reset() {
         discardAudio()
+        noteCreate.reset()
         transcript = ""
         engineUsed = ""
         errorMessage = nil
@@ -46,6 +49,7 @@ final class VoiceCaptureFlow {
     /// The recorder finished; keep its file for transcription (and any retry of it).
     func adopt(_ url: URL) {
         if let old = audioURL, old != url { removeFile(old) }
+        if audioURL != url { noteCreate.reset() }
         audioURL = url
     }
 
@@ -77,17 +81,25 @@ final class VoiceCaptureFlow {
 
     /// Save the reviewed transcript as a note via `save` (true on success). The recording is
     /// released only once the note is committed; on failure it's kept and the error shown.
-    func saveNote(using save: (_ text: String, _ engine: String) async -> String?) async -> Bool {
+    func saveNote(using save: (_ text: String, _ engine: String, _ key: String) async -> String?) async -> Bool {
         guard !saving else { return false }
         saving = true
         defer { saving = false }
-        if let failure = await save(transcript, engineUsed.isEmpty ? "sfspeech" : engineUsed) {
-            errorMessage = failure
+        do {
+            let engine = engineUsed.isEmpty ? "sfspeech" : engineUsed
+            let key = try noteCreate.key(for: NotePayload(text: transcript, engine: engine))
+            if let failure = await save(transcript, engine, key) {
+                errorMessage = failure
+                return false
+            }
+            noteCreate.succeeded(key: key)
+            errorMessage = nil
+            discardAudio()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
             return false
         }
-        errorMessage = nil
-        discardAudio()
-        return true
     }
 
     /// The transcript was handed to the caller from review: the words are committed.

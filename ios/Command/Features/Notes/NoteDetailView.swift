@@ -410,7 +410,7 @@ struct NoteDetailView: View {
         saveTask = Task {
             try? await Task.sleep(for: .milliseconds(700))
             if Task.isCancelled { return }
-            await saver.flush(using: saveOps)
+            await saver.autosave(using: saveOps)
         }
     }
 

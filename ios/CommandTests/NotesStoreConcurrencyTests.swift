@@ -10,7 +10,8 @@ private final class NoteRequestProtocol: URLProtocol {
     nonisolated(unsafe) static var failNextPatch = false
     static let noteJSON = Data("""
     {"id":42,"account_id":1,"body":"Idea","title":"Idea","title_status":"user",
-    "source":"typed","created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:00:00Z"}
+    "source":"typed","schedule_kind":"sporadic","status":"scheduled","priority":0,
+    "occurred_at":"2026-10-01T00:00:00Z","created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:00:00Z"}
     """.utf8)
     static func reset() {
         lock.lock(); defer { lock.unlock() }; posts = []; onPost = nil; hold = true; failNextPatch = false
@@ -28,6 +29,8 @@ private final class NoteRequestProtocol: URLProtocol {
             Self.posts.append(self); let callback = Self.onPost; let held = Self.hold
             Self.lock.unlock(); callback?()
             if !held { respond(Self.noteJSON) }
+        } else if request.url?.path == "/api/activities/summary" {
+            respond(Data("[]".utf8))
         } else if request.httpMethod == "GET" {
             respond(Data("{\"items\":[".utf8) + Self.noteJSON + Data("],\"next_cursor\":null}".utf8))
         } else {
@@ -46,6 +49,10 @@ private final class NoteRequestProtocol: URLProtocol {
 
 @MainActor
 final class NotesStoreConcurrencyTests: XCTestCase {
+    private func parked(id: Int? = nil, text: String) -> NoteSaver {
+        let saver = NoteSaver(noteId: id, text: ""); saver.text = text; return saver
+    }
+
     private func client() -> APIClient {
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [NoteRequestProtocol.self]
         return APIClient(baseURL: URL(string: "http://stub.invalid")!, configuration: config)
@@ -73,9 +80,32 @@ final class NotesStoreConcurrencyTests: XCTestCase {
         NoteRequestProtocol.releaseAll(); _ = await send.value
         XCTAssertEqual(store.draft, "Next idea")
     }
+    func testLogAndScheduleGuardOverlappingSendAndKeepNewerDraft() async {
+        for mode in ["log", "schedule"] {
+            NoteRequestProtocol.reset()
+            let log = LogStore(), schedule = ScheduleStore(), client = client(), e = started()
+            log.draft = "Idea"; schedule.draft = "Idea"
+            func submit() async -> Bool {
+                if mode == "log" { return await log.logDraft(client: client) }
+                return await schedule.addToQueue(client: client)
+            }
+            let first = Task { await submit() }
+            await fulfillment(of: [e], timeout: 2); NoteRequestProtocol.onPost = nil
+            let second = Task { await submit() }
+            log.draft = "Next idea"; schedule.draft = "Next idea"; schedule.repeats = .weekly
+            await settle(); XCTAssertEqual(NoteRequestProtocol.count, 1, mode)
+            NoteRequestProtocol.releaseAll()
+            let firstOK = await first.value; _ = await second.value
+            XCTAssertTrue(firstOK, mode)
+            XCTAssertEqual(log.draft, "Next idea", mode)
+            XCTAssertEqual(schedule.draft, "Next idea", mode)
+            XCTAssertEqual(schedule.repeats, .weekly, mode)
+        }
+    }
+
     func testRetryDoubleTapStartsOnlyOneCreateForParkedComposer() async {
         NoteRequestProtocol.reset()
-        let store = NotesStore(), client = client(), e = started(); store.park(noteId: nil, text: "Idea")
+        let store = NotesStore(), client = client(), e = started(); store.park(saver: parked(text: "Idea"))
         let first = Task { await store.retryUnsavedEdits(client: client) }
         await fulfillment(of: [e], timeout: 2); NoteRequestProtocol.onPost = nil
         let second = Task { await store.retryUnsavedEdits(client: client) }
@@ -108,10 +138,10 @@ final class NotesStoreConcurrencyTests: XCTestCase {
     func testEditParkedDuringRetryIsNotDropped() async {
         NoteRequestProtocol.reset()
         let store = NotesStore(), client = client(), e = started()
-        store.park(noteId: nil, text: "Idea")
+        store.park(saver: parked(text: "Idea"))
         let retry = Task { await store.retryUnsavedEdits(client: client) }
         await fulfillment(of: [e], timeout: 2)
-        store.park(noteId: nil, text: "Another idea")
+        store.park(saver: parked(text: "Another idea"))
         NoteRequestProtocol.releaseAll()
         await retry.value
         XCTAssertEqual(store.unsavedEdits.map(\.text), ["Another idea"])

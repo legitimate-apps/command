@@ -46,10 +46,10 @@ final class TasksStore {
     /// assign call defaults the lead time from the delegatee and returns the
     /// human lead-time warning, if any. Returns (assignment, warning).
     func createAssignment(_ body: AssignmentCreateBody, assigneeSlug: String?,
-                          client: APIClient) async -> (Assignment?, String?) {
+                          idempotencyKey: String = UUID().uuidString, client: APIClient) async -> (Assignment?, String?) {
         let created: Assignment
         do {
-            created = try await client.createAssignment(body)
+            created = try await client.createAssignment(body, idempotencyKey: idempotencyKey)
         } catch {
             errorMessage = describe(error)
             return (nil, nil)   // nothing was created — safe for the user to retry
