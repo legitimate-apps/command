@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from ..db import now_iso
 from ..errors import NotFound, ValidationError
-from . import _cursor, quotas
+from . import _cursor, idempotency, quotas
 
 VALID_SOURCES = {"typed", "voice"}
 MAX_LIMIT = 200
@@ -68,7 +68,31 @@ def create(
     locale: str | None = None,
     title: str | None = None,
     hidden: bool = False,
+    idempotency_key: str | None = None,
 ) -> Note:
+    note, _ = create_with_result(
+        conn, account_id, body, source=source, engine=engine, locale=locale,
+        title=title, hidden=hidden, idempotency_key=idempotency_key,
+    )
+    return note
+
+
+def create_with_result(
+    conn: sqlite3.Connection,
+    account_id: int,
+    body: str,
+    *,
+    source: str = "typed",
+    engine: str | None = None,
+    locale: str | None = None,
+    title: str | None = None,
+    hidden: bool = False,
+    idempotency_key: str | None = None,
+) -> tuple[Note, bool]:
+    """Return (current note, newly created); only new creates may queue title work."""
+    existing = idempotency.existing_id(conn, "notes", account_id, idempotency_key)
+    if existing is not None:
+        return get(conn, account_id, existing), False
     body = (body or "").strip()
     if not body:
         raise ValidationError("Note body cannot be empty.")
@@ -80,10 +104,11 @@ def create(
     ts = now_iso()
     cur = conn.execute(
         "INSERT INTO notes (account_id, body, source, engine, locale, title, title_status, "
-        "hidden, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (account_id, body, source, engine, locale, title, title_status, 1 if hidden else 0, ts, ts),
+        "hidden, created_at, updated_at, idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (account_id, body, source, engine, locale, title, title_status, 1 if hidden else 0,
+         ts, ts, idempotency_key),
     )
-    return get(conn, account_id, int(cur.lastrowid or 0))
+    return get(conn, account_id, int(cur.lastrowid or 0)), True
 
 
 def get(conn: sqlite3.Connection, account_id: int, note_id: int) -> Note:

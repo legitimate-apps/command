@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Query
+from typing import Annotated
+
+from fastapi import APIRouter, BackgroundTasks, Header, Query
 from pydantic import BaseModel
 
 from ..core import ai, entitlements, notes
@@ -61,9 +63,12 @@ def search_notes(
 
 @router.post("", response_model=notes.Note, status_code=201)
 def create_note(
-    body: NoteCreate, account: CurrentAccount, conn: Db, background_tasks: BackgroundTasks
+    body: NoteCreate, account: CurrentAccount, conn: Db, background_tasks: BackgroundTasks,
+    idempotency_key: Annotated[
+        str | None, Header(description="Opaque key, 1-255 characters; reuse on create retries.")
+    ] = None,
 ) -> notes.Note:
-    note = notes.create(
+    note, created = notes.create_with_result(
         conn,
         account.id,
         body.body,
@@ -72,10 +77,11 @@ def create_note(
         locale=body.locale,
         title=body.title,
         hidden=body.hidden,
+        idempotency_key=idempotency_key,
     )
     # Every fresh note without a user-set title gets a terse AI title in the
     # background, so the list reads as titles rather than raw first lines.
-    if notes.wants_auto_title(note) and not note.title and _may_auto_title(conn, account.id):
+    if created and notes.wants_auto_title(note) and not note.title and _may_auto_title(conn, account.id):
         # Commit now so the note is visible to the background task's own DB
         # connection (it runs after the response, on a separate connection).
         conn.commit()

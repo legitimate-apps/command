@@ -18,7 +18,12 @@ from ..errors import AuthFailed, NotFound
 
 
 def get_db(settings: Annotated[Settings, Depends(get_settings)]) -> Iterator[sqlite3.Connection]:
-    """Open a connection for the request; commit on success, roll back on error."""
+    """Commit before sending success (function scope); roll back on error.
+
+    Every get_db dependency must use function scope, including auth: otherwise
+    FastAPI can keep a second/request-scoped connection until after the response.
+    Streams and background tasks own separate connections, never this one.
+    """
     conn = connect(settings.db_path)
     try:
         yield conn
@@ -73,7 +78,7 @@ def cookie_refresher(request: Request, settings: Settings, token: str) -> Callab
 def get_current_account(
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> Account:
     token = session_token_from_request(request, settings)
     if token:
@@ -96,7 +101,7 @@ CurrentAccount = Annotated[Account, Depends(get_current_account)]
 def get_current_delegatee(
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> tuple[Account, Delegatee]:
     token = session_token_from_request(request, settings)
     scoped = delegatee_access.delegatee_for_session(
@@ -111,5 +116,5 @@ def get_current_delegatee(
 
 
 CurrentDelegatee = Annotated[tuple[Account, Delegatee], Depends(get_current_delegatee)]
-Db = Annotated[sqlite3.Connection, Depends(get_db)]
+Db = Annotated[sqlite3.Connection, Depends(get_db, scope="function")]
 Config = Annotated[Settings, Depends(get_settings)]

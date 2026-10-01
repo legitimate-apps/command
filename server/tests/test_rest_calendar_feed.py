@@ -25,6 +25,10 @@ SECRET = "test-calendar-export-secret"
 @pytest.fixture
 def feed_client(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """The standard client, plus calendar export switched on."""
+    # Keep the fixed September events inside the feed's rolling history window.
+    clock_file = tmp_path / "now.txt"
+    clock_file.write_text("2026-09-10T12:00:00+00:00")
+    monkeypatch.setenv("COMMAND_FAKE_NOW_FILE", str(clock_file))
     monkeypatch.setenv("COMMAND_DB_PATH", str(tmp_path / "feed.db"))
     monkeypatch.setenv("COMMAND_COOKIE_SECURE", "false")
     monkeypatch.setenv("COMMAND_ENVIRONMENT", "dev")

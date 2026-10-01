@@ -340,3 +340,41 @@ async def test_a_binary_attachment_reports_its_type_instead_of_returning_noise(l
     out = await _call(mcp, "attachments_read", attachment_id=saved.id)
     assert out["readable"] is False
     assert "content" not in out, "binary contents must not be returned at all"
+
+
+@pytest.mark.anyio
+async def test_notes_create_retry_is_persistent_and_only_audits_once(live) -> None:
+    mcp, conn, account_id = live
+    first = await _call(mcp, "notes_create", body="capture", idempotency_key="mcp-retry")
+    notes_core.update_body(conn, account_id, first["id"], "edited in app")
+    conn.commit()
+    replay = await _call(mcp, "notes_create", body="", source="invalid", idempotency_key="mcp-retry")
+    assert replay["id"] == first["id"]
+    assert replay["body"] == "edited in app"
+    assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM audit_log WHERE tool = 'notes_create'").fetchone()[0] == 1
+    tools = {tool.name: tool for tool in await mcp.list_tools()}
+    assert tools["notes_create"].annotations.idempotentHint is False  # key remains optional
+    assert "idempotency_key" in tools["notes_create"].inputSchema["properties"]
+    with pytest.raises(ToolError, match="1-255"):
+        await _call(mcp, "notes_create", body="capture", idempotency_key="x" * 256)
+
+
+@pytest.mark.anyio
+async def test_notes_create_replay_honors_the_veil_and_permission_matrix(live) -> None:
+    from command.core import settings as settings_core
+
+    mcp, conn, account_id = live
+    first = await _call(mcp, "notes_create", body="capture", idempotency_key="hidden-retry")
+    notes_core.set_hidden(conn, account_id, first["id"], True)
+    conn.commit()
+    with pytest.raises(ToolError, match="No note"):
+        await _call(mcp, "notes_create", body="changed", idempotency_key="hidden-retry")
+    replay = await _call(
+        mcp, "notes_create", body="changed", idempotency_key="hidden-retry", include_hidden=True
+    )
+    assert replay["id"] == first["id"] and replay["hidden"] is True
+    settings_core.set_value(conn, account_id, "mcp_permissions", {"notes": {"create": False}})
+    conn.commit()
+    with pytest.raises(ToolError):
+        await _call(mcp, "notes_create", body="capture", idempotency_key="hidden-retry", include_hidden=True)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Header, Query
 from pydantic import BaseModel
 
 from ..core import activities as activities_core
@@ -75,8 +75,11 @@ def list_activities(
 
 
 @router.post("", response_model=activities_core.Activity, status_code=201)
-def create_activity(body: ActivityCreate, account: CurrentAccount, conn: Db) -> activities_core.Activity:
-    return activities_core.create(conn, account.id, **body.model_dump())
+def create_activity(
+    body: ActivityCreate, account: CurrentAccount, conn: Db,
+    idempotency_key: Annotated[str | None, Header()] = None,
+) -> activities_core.Activity:
+    return activities_core.create(conn, account.id, idempotency_key=idempotency_key, **body.model_dump())
 
 
 # Static route BEFORE /{activity_id} so it isn't captured as an id.

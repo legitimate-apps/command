@@ -78,6 +78,22 @@ auth is a **bearer access token** that the operator copies from the Command app
   not tell the operator you can delete a note — you can't. If they want a note
   gone, that's an app-side archive they do themselves.
 
+### Retrying a note create
+
+Search for an existing capture before using `notes_create`. For a new capture,
+pass an optional `idempotency_key` and retain it if the result is uncertain.
+Reusing that exact key returns the same note's **current state**, even if your
+retry body/source differs, without adding or overwriting a note. Keys are opaque,
+case-sensitive strings of 1-255 characters, scoped to this account's notes and
+persisted across server restarts. Omitting the key creates a separate note on
+every call; `idempotentHint` remains false because this parameter is optional.
+Do not reuse a key for a different intended capture.
+
+Replays still require `notes.create` permission. If the operator subsequently
+hides the note in the app, a retry returns the usual "no such note" unless you
+pass `include_hidden: true` with the operator's authorization (see §4.5).
+Archived notes still replay. Only a fresh create adds a create-audit record.
+
 ## 4.5 The invisible-ink veil (`hidden`)
 
 Notes, assignments and activities can each be marked **hidden** — the operator's
@@ -95,7 +111,8 @@ to share with an assistant.
   `checklist_list` resolve the parent first and report the same "no such thing" when
   it is veiled. A hidden assignment's filenames and checklist steps are as revealing
   as its title.
-- **Writes by id are veiled too.** `notes_mark_processed`, `assignments_update` /
+- **Writes by id are veiled too.** Keyed `notes_create` replays,
+  `notes_mark_processed`, `assignments_update` /
   `_assign` / `_set_status`, `activities_update`, `activities_log` (its
   `assignment_id`), `checklist_add` / `checklist_set_done` and `goals_link_notes`
   treat a hidden target as not found unless you pass `include_hidden: true` — each

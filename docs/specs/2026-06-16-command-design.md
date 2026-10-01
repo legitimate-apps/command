@@ -171,6 +171,39 @@ GET/PUT           /api/settings
 GET    /api/health
 ```
 
+### Create retries (updated 2026-10-01)
+
+`POST /api/notes`, `POST /api/activities` (the capture bar's log) and
+`POST /api/assignments` (schedule queue and tasks) accept an optional
+`Idempotency-Key` header. Generate one opaque key per intended capture, retain
+it with unsaved work, and reuse it on every retry after a lost response. Keys
+are exact, case-sensitive strings of 1-255 characters; an empty or longer key
+returns an actionable `422 validation_error`. Omit the header to keep the
+existing behavior: every successful call creates a new row.
+
+The first keyed call creates a row. Later calls with that key in the same
+account and entity return the **same id and its current state**, ignoring the
+new payload's values; they never overwrite edits or add rows. Requests must
+still authenticate and supply a structurally valid JSON request body. Both
+first creates and replays return **201** with the existing response shape,
+compatible with the shipped app's acceptance of all 2xx statuses. Keys are not
+included in response models. A replay never queues another note-title job.
+
+Keys persist in nullable row columns, protected by partial UNIQUE indexes on
+`(account_id, idempotency_key)` (migration 0027). A keyed core create acquires
+SQLite's writer lock before lookup/validation; simultaneous retries serialize
+and replay the winner, including when the quota is now full. No expiry worker,
+new dependency or separate key store is needed. Notes retain their keys when
+archived or hidden. Activity/assignment keys last until the row is deleted;
+retrying after deletion creates a new row. Keys are scoped per entity as well
+as account, so the same key may independently create a note and an activity.
+
+REST database dependencies use FastAPI's `scope="function"`: transaction commit
+and connection cleanup complete before success is sent. Background title jobs
+and streaming endpoints use their own connections. This was tested at the ASGI
+response-send boundary with FastAPI 0.141.1 / Starlette 1.6.0; ordinary TestClient
+calls alone wait for cleanup and cannot prove that timing guarantee.
+
 ---
 
 ## 5. Auth & the memorable access token

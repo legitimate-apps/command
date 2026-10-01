@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from ..db import now_iso
 from ..errors import NotFound, ValidationError
-from . import _cursor, quotas
+from . import _cursor, idempotency, quotas
 from . import delegatees as delegatees_core
 from . import goals as goals_core
 
@@ -135,7 +135,11 @@ def create(
     occurrence_date: str | None = None,
     source: str = "manual",
     hidden: bool = False,
+    idempotency_key: str | None = None,
 ) -> Activity:
+    existing = idempotency.existing_id(conn, "activities", account_id, idempotency_key)
+    if existing is not None:
+        return get(conn, account_id, existing)
     title = (title or "").strip()
     if not title:
         raise ValidationError("Activity title is required.", hint="e.g. 'Took out the trash'")
@@ -154,8 +158,9 @@ def create(
     ts = now_iso()
     cur = conn.execute(
         "INSERT INTO activities (account_id, actor_id, title, details, category, occurred_at, "
-        "duration_minutes, goal_id, assignment_id, occurrence_date, source, hidden, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "duration_minutes, goal_id, assignment_id, occurrence_date, source, hidden, created_at, "
+        "updated_at, idempotency_key) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             account_id,
             resolved_actor,
@@ -171,6 +176,7 @@ def create(
             1 if hidden else 0,
             ts,
             ts,
+            idempotency_key,
         ),
     )
     return get(conn, account_id, int(cur.lastrowid or 0))

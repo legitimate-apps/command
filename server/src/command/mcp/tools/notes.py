@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from ...config import Settings
 from ...core import notes as notes_core
@@ -85,7 +86,10 @@ def register(mcp: FastMCP, settings: Settings) -> None:
         name="notes_create",
         description=(
             "Create a note for this account (e.g. to capture a decision reached with the operator). "
-            "Additive only; notes are never deletable via MCP."
+            "Search for a matching capture before creating. Reuse an idempotency_key if retrying an "
+            "uncertain result: the same key returns the current note without creating or overwriting it. "
+            "Omit the key only when every call should create a separate capture. "
+            "Additive only; notes are never deletable via MCP. Hidden replays require include_hidden."
         ),
         annotations=ToolAnnotations(
             title="Create note",
@@ -95,19 +99,32 @@ def register(mcp: FastMCP, settings: Settings) -> None:
             openWorldHint=False,
         ),
     )
-    async def notes_create(body: str, source: str = "typed") -> dict[str, Any]:
+    async def notes_create(
+        body: str,
+        source: str = "typed",
+        idempotency_key: Annotated[
+            str | None, Field(description="Opaque create key, 1-255 characters; reuse on retries.")
+        ] = None,
+        include_hidden: bool = False,
+    ) -> dict[str, Any]:
         def work(conn: sqlite3.Connection, account_id: int) -> dict[str, Any]:
             permissions.require(conn, account_id, "notes", "create")
-            note = notes_core.create(conn, account_id, body, source=source)
-            permissions.audit(
-                conn,
-                account_id,
-                tool="notes_create",
-                action="create",
-                entity="note",
-                entity_id=note.id,
-                summary=note.body[:80],
+            note, created = notes_core.create_with_result(
+                conn, account_id, body, source=source, idempotency_key=idempotency_key
             )
+            note = notes_core.get_for_agent(
+                conn, account_id, note.id, include_hidden=include_hidden
+            )
+            if created:
+                permissions.audit(
+                    conn,
+                    account_id,
+                    tool="notes_create",
+                    action="create",
+                    entity="note",
+                    entity_id=note.id,
+                    summary=note.body[:80],
+                )
             return note.model_dump()
 
         return await run_for_account(settings.db_path, work)

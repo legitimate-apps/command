@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Response
+from typing import Annotated
+
+from fastapi import APIRouter, Header, Query, Response
 from pydantic import BaseModel
 
 from ..core import assignments as assignments_core
@@ -100,9 +102,10 @@ def list_assignments(
 
 @router.post("", response_model=assignments_core.Assignment, status_code=201)
 def create_assignment(
-    body: AssignmentCreate, account: CurrentAccount, conn: Db
+    body: AssignmentCreate, account: CurrentAccount, conn: Db,
+    idempotency_key: Annotated[str | None, Header()] = None,
 ) -> assignments_core.Assignment:
-    return assignments_core.create(conn, account.id, **body.model_dump())
+    return assignments_core.create(conn, account.id, idempotency_key=idempotency_key, **body.model_dump())
 
 
 # Static routes BEFORE the parameterized /{assignment_id} so they aren't captured as an id.

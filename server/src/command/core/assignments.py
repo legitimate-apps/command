@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from ..db import now_iso
 from ..errors import NotFound, ValidationError
-from . import _cursor, clock, quotas
+from . import _cursor, clock, idempotency, quotas
 from . import activities as activities_core
 from . import delegatees as delegatees_core
 from . import goals as goals_core
@@ -259,7 +259,11 @@ def create(
     priority: int = 0,
     hidden: bool = False,
     origin: str | None = "manual",
+    idempotency_key: str | None = None,
 ) -> Assignment:
+    existing = idempotency.existing_id(conn, "assignments", account_id, idempotency_key)
+    if existing is not None:
+        return get(conn, account_id, existing)
     title = (title or "").strip()
     if not title:
         raise ValidationError("Assignment title is required.")
@@ -277,8 +281,8 @@ def create(
     cur = conn.execute(
         "INSERT INTO assignments (account_id, goal_id, title, details, assignee_id, schedule_kind, "
         "rrule, scheduled_start, scheduled_end, timezone, lead_time_minutes, status, priority, "
-        "hidden, origin, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "hidden, origin, created_at, updated_at, idempotency_key) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             account_id,
             goal_id,
@@ -297,6 +301,7 @@ def create(
             origin,
             ts,
             ts,
+            idempotency_key,
         ),
     )
     return get(conn, account_id, int(cur.lastrowid or 0))
