@@ -82,17 +82,34 @@ auth is a **bearer access token** that the operator copies from the Command app
 
 Search for an existing capture before using `notes_create`. For a new capture,
 pass an optional `idempotency_key` and retain it if the result is uncertain.
-Reusing that exact key returns the same note's **current state**, even if your
-retry body/source differs, without adding or overwriting a note. Keys are opaque,
+Reusing that exact key confirms the original capture, even if your retry
+body/source differs, without adding or overwriting a note. Keys are opaque,
 case-sensitive strings of 1-255 characters, scoped to this account's notes and
 persisted across server restarts. Omitting the key creates a separate note on
 every call; `idempotentHint` remains false because this parameter is optional.
 Do not reuse a key for a different intended capture.
 
-Replays still require `notes.create` permission. If the operator subsequently
-hides the note in the app, a retry returns the usual "no such note" unless you
-pass `include_hidden: true` with the operator's authorization (see §4.5).
-Archived notes still replay. Only a fresh create adds a create-audit record.
+Every call still requires `notes.create` permission. A fresh create returns the
+full note you just wrote, even if `notes.read` is disabled. A replay returns the
+note's **current state** only when `notes.read` is granted and the veil permits
+that read. Otherwise it returns this successful receipt:
+
+```json
+{
+  "id": 42,
+  "replayed": true,
+  "content_withheld": true,
+  "message": "Content withheld by read permissions or visibility settings."
+}
+```
+
+This same receipt covers denied read permission and a hidden note without
+opt-in; it reveals no title, body, hidden flag or other current-state fields.
+Use the returned id to continue your workflow; the create already succeeded,
+so do not repeat it with a new key. `include_hidden: true` still makes sense
+for a retry when the operator has authorized hidden content (see §4.5), but
+it never overrides denied `notes.read` permission. Archived notes still replay.
+Only a fresh create adds a create-audit record.
 
 ## 4.5 The invisible-ink veil (`hidden`)
 
@@ -111,16 +128,16 @@ to share with an assistant.
   `checklist_list` resolve the parent first and report the same "no such thing" when
   it is veiled. A hidden assignment's filenames and checklist steps are as revealing
   as its title.
-- **Writes by id are veiled too.** Keyed `notes_create` replays,
-  `notes_mark_processed`, `assignments_update` /
+- **Writes by id are veiled too.** `notes_create` replays use the minimal receipt
+  above when content is unavailable. `notes_mark_processed`, `assignments_update` /
   `_assign` / `_set_status`, `activities_update`, `activities_log` (its
   `assignment_id`), `checklist_add` / `checklist_set_done` and `goals_link_notes`
   treat a hidden target as not found unless you pass `include_hidden: true` — each
   would otherwise echo the hidden row back. `goals_get` leaves hidden notes out of
   `note_ids`, and `schedule_find_conflicts` / `schedule_find_stale` leave hidden
   assignments (and their titles) out, under the same flag.
-- A veiled item is **indistinguishable from one that does not exist** — you get the
-  same "no such note/assignment/activity" you would for a bad id. This is on
+- For lookups by id, a veiled item is **indistinguishable from one that does not
+  exist** — you get the same "no such note/assignment/activity" you would for a bad id. This is on
   purpose: "it exists but you may not see it" would leak the thing the veil hides.
 - **So do not conclude an id is invalid.** If the operator insists something is
   there and you cannot find it, say it may be hidden and ask whether to include

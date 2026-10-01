@@ -15,8 +15,8 @@ from typing import Any
 from pydantic import BaseModel
 
 from ..db import now_iso
-from ..errors import NotFound, ValidationError
-from . import _cursor, idempotency, quotas
+from ..errors import NotFound, PermissionDenied, ValidationError
+from . import _cursor, idempotency, quotas, settings
 
 VALID_SOURCES = {"typed", "voice"}
 MAX_LIMIT = 200
@@ -109,6 +109,40 @@ def create_with_result(
          ts, ts, idempotency_key),
     )
     return get(conn, account_id, int(cur.lastrowid or 0)), True
+
+
+def create_for_agent(
+    conn: sqlite3.Connection,
+    account_id: int,
+    body: str,
+    *,
+    source: str = "typed",
+    idempotency_key: str | None = None,
+    include_hidden: bool = False,
+) -> tuple[dict[str, Any], bool]:
+    """Create and safely serialize the agent's result; return (payload, created).
+
+    Fresh captures may echo what the agent just wrote under create permission.
+    A replay reads current user content, so it needs read permission AND the
+    veil gate. Both refusals return the identical receipt: knowing a create key
+    must not disclose updated content or whether the operator hid the note.
+    """
+    settings.require_agent_permission(conn, account_id, "notes", "create")
+    note, created = create_with_result(
+        conn, account_id, body, source=source, idempotency_key=idempotency_key
+    )
+    if not created:
+        try:
+            settings.require_agent_permission(conn, account_id, "notes", "read")
+            note = get_for_agent(conn, account_id, note.id, include_hidden=include_hidden)
+        except (PermissionDenied, NotFound):
+            return {
+                "id": note.id,
+                "replayed": True,
+                "content_withheld": True,
+                "message": "Content withheld by read permissions or visibility settings.",
+            }, False
+    return note.model_dump(), created
 
 
 def get(conn: sqlite3.Connection, account_id: int, note_id: int) -> Note:

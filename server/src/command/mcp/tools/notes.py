@@ -87,9 +87,12 @@ def register(mcp: FastMCP, settings: Settings) -> None:
         description=(
             "Create a note for this account (e.g. to capture a decision reached with the operator). "
             "Search for a matching capture before creating. Reuse an idempotency_key if retrying an "
-            "uncertain result: the same key returns the current note without creating or overwriting it. "
+            "uncertain result: the same key confirms the capture without creating or overwriting it. "
+            "Replay content requires notes.read permission and visibility; otherwise you receive only "
+            "an id and a content-withheld receipt. Use that id to continue without retrying the create. "
             "Omit the key only when every call should create a separate capture. "
-            "Additive only; notes are never deletable via MCP. Hidden replays require include_hidden."
+            "Additive only; notes are never deletable via MCP. Opt into hidden replay content only when "
+            "the operator asks; include_hidden never overrides denied read permission."
         ),
         annotations=ToolAnnotations(
             title="Create note",
@@ -105,15 +108,15 @@ def register(mcp: FastMCP, settings: Settings) -> None:
         idempotency_key: Annotated[
             str | None, Field(description="Opaque create key, 1-255 characters; reuse on retries.")
         ] = None,
-        include_hidden: bool = False,
+        include_hidden: Annotated[
+            bool, Field(description="Allow hidden replay content if notes.read is granted; default false.")
+        ] = False,
     ) -> dict[str, Any]:
         def work(conn: sqlite3.Connection, account_id: int) -> dict[str, Any]:
             permissions.require(conn, account_id, "notes", "create")
-            note, created = notes_core.create_with_result(
-                conn, account_id, body, source=source, idempotency_key=idempotency_key
-            )
-            note = notes_core.get_for_agent(
-                conn, account_id, note.id, include_hidden=include_hidden
+            result, created = notes_core.create_for_agent(
+                conn, account_id, body, source=source, idempotency_key=idempotency_key,
+                include_hidden=include_hidden,
             )
             if created:
                 permissions.audit(
@@ -122,10 +125,10 @@ def register(mcp: FastMCP, settings: Settings) -> None:
                     tool="notes_create",
                     action="create",
                     entity="note",
-                    entity_id=note.id,
-                    summary=note.body[:80],
+                    entity_id=result["id"],
+                    summary=result["body"][:80],
                 )
-            return note.model_dump()
+            return result
 
         return await run_for_account(settings.db_path, work)
 

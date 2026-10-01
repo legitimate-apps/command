@@ -356,6 +356,8 @@ async def test_notes_create_retry_is_persistent_and_only_audits_once(live) -> No
     tools = {tool.name: tool for tool in await mcp.list_tools()}
     assert tools["notes_create"].annotations.idempotentHint is False  # key remains optional
     assert "idempotency_key" in tools["notes_create"].inputSchema["properties"]
+    for name in ("activities_log", "assignments_create"):
+        assert "idempotency_key" not in tools[name].inputSchema["properties"]
     with pytest.raises(ToolError, match="1-255"):
         await _call(mcp, "notes_create", body="capture", idempotency_key="x" * 256)
 
@@ -368,8 +370,11 @@ async def test_notes_create_replay_honors_the_veil_and_permission_matrix(live) -
     first = await _call(mcp, "notes_create", body="capture", idempotency_key="hidden-retry")
     notes_core.set_hidden(conn, account_id, first["id"], True)
     conn.commit()
-    with pytest.raises(ToolError, match="No note"):
-        await _call(mcp, "notes_create", body="changed", idempotency_key="hidden-retry")
+    withheld = await _call(mcp, "notes_create", body="changed", idempotency_key="hidden-retry")
+    assert withheld == {
+        "id": first["id"], "replayed": True, "content_withheld": True,
+        "message": "Content withheld by read permissions or visibility settings.",
+    }
     replay = await _call(
         mcp, "notes_create", body="changed", idempotency_key="hidden-retry", include_hidden=True
     )
@@ -378,3 +383,46 @@ async def test_notes_create_replay_honors_the_veil_and_permission_matrix(live) -
     conn.commit()
     with pytest.raises(ToolError):
         await _call(mcp, "notes_create", body="capture", idempotency_key="hidden-retry", include_hidden=True)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("read_allowed", "hidden", "include_hidden"), [
+    (False, False, False), (False, False, True), (False, True, False), (False, True, True),
+    (True, True, False), (True, False, False), (True, True, True),
+])
+async def test_notes_create_replay_requires_read_permission_and_visibility(
+    live, read_allowed: bool, hidden: bool, include_hidden: bool
+) -> None:
+    from command.core import settings as settings_core
+
+    mcp, conn, account_id = live
+    settings_core.set_value(conn, account_id, "mcp_permissions", {
+        "notes": {"create": True, "read": read_allowed},
+    })
+    conn.commit()
+    first = await _call(mcp, "notes_create", body="agent capture", idempotency_key="disclosure-retry")
+    # Create-only agents may receive what they just wrote, with the same full shape.
+    assert first == notes_core.get(conn, account_id, first["id"]).model_dump()
+    notes_core.update_body(conn, account_id, first["id"], "private edit from app")
+    notes_core.set_title(conn, account_id, first["id"], "Private title", status="user")
+    notes_core.set_hidden(conn, account_id, first["id"], hidden)
+    conn.commit()
+    may_read = read_allowed and (not hidden or include_hidden)
+    if not may_read:
+        with pytest.raises(ToolError):
+            await _call(mcp, "notes_get", note_id=first["id"], include_hidden=include_hidden)
+    replay = await _call(
+        mcp, "notes_create", body="retry", idempotency_key="disclosure-retry", include_hidden=include_hidden
+    )
+    if may_read:
+        assert replay == notes_core.get(conn, account_id, first["id"]).model_dump()
+        assert replay["body"] == "private edit from app"
+    else:
+        # Exactly the same envelope for denied reads and veiled notes: no clue
+        # about the hidden flag, title, body or any other current-state field.
+        assert replay == {
+            "id": first["id"], "replayed": True, "content_withheld": True,
+            "message": "Content withheld by read permissions or visibility settings.",
+        }
+    assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM audit_log WHERE tool = 'notes_create'").fetchone()[0] == 1

@@ -152,10 +152,17 @@ def test_note_replay_survives_archive_hidden_and_full_quota(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from command.config import get_settings
+    from command.core import settings as settings_core
+    from command.db import connection
 
     _auth(client)
     headers = {"Idempotency-Key": "x" * 255}
     first = client.post("/api/notes", headers=headers, json={"body": "private draft"}).json()
+    client.patch(f"/api/notes/{first['id']}", json={"body": "edited by owner"})
+    with connection(get_settings().db_path) as conn:
+        settings_core.set_value(conn, first["account_id"], "mcp_permissions", {
+            "notes": {"create": False, "read": False},
+        })
     client.post(f"/api/notes/{first['id']}/archive")
     client.post(f"/api/notes/{first['id']}/hidden")
     monkeypatch.setattr(get_settings(), "max_notes_per_account", 1)
@@ -164,6 +171,7 @@ def test_note_replay_survives_archive_hidden_and_full_quota(
     assert replay.json()["id"] == first["id"]
     assert replay.json()["archived_at"] is not None
     assert replay.json()["hidden"] is True
+    assert replay.json()["body"] == "edited by owner"  # app ownership, not MCP permissions
     assert "idempotency_key" not in replay.json()
     assert client.post("/api/notes", json={"body": "new"}).status_code == 403
 
