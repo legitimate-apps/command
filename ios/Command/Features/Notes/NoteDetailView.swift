@@ -29,12 +29,8 @@ struct NoteDetailView: View {
     /// its id once created, and the serialized save path. See NoteSaver.
     @State private var saver: NoteSaver
     @State private var saveTask: Task<Void, Never>?
-    @State private var finished = false
-    @State private var editorOwner = UUID()
+    @State private var lifetime = NoteEditorLifetime()
     @State private var registeredEditor = false
-    /// Set when a Close couldn't save: the editor stays open with Retry / Discard instead of
-    /// closing over the unsaved text.
-    @State private var closeBlocked = false
     @State private var showDiscard = false
     @State private var showHistory = false
     @State private var showDelete = false
@@ -197,8 +193,9 @@ struct NoteDetailView: View {
                 Text("Your latest edits to this note haven't been saved.")
             }
             .onAppear {
+                lifetime.appear()
                 guard !registeredEditor else { return }
-                saver = store.resumeEditor(saver: saver, owner: editorOwner)
+                saver = store.resumeEditor(saver: saver, owner: lifetime.owner)
                 registeredEditor = true
             }
             .onDisappear { finishOnDisappear() }
@@ -315,7 +312,7 @@ struct NoteDetailView: View {
                 .foregroundStyle(Palette.ink)
                 .lineLimit(2)
             Spacer(minLength: 8)
-            if closeBlocked {
+            if lifetime.closeBlocked {
                 Button("Discard", role: .destructive) { showDiscard = true }
                     .font(Typeface.body(13, .semibold))
             }
@@ -422,22 +419,17 @@ struct NoteDetailView: View {
         }
     }
 
-    /// Close requested by the user (Close / Hide): save everything, then close. If the save fails
-    /// the editor STAYS OPEN with the error and Retry / Discard — never closes over unsaved text.
+    /// Close requested by the user (Close / Hide): save everything, then close. A visible failed
+    /// editor stays open for Retry / Discard; an editor that disappeared parks the failed edit.
     private func finish() {
-        guard !finished else { return }
-        finished = true
+        // Hold the actual resumed session through the await, even after SwiftUI removes its State.
+        let lifetime = lifetime, saver = saver, store = store, client = client, ops = saveOps
+        guard lifetime.beginFinish() else { return }
         saveTask?.cancel()
         Task {
-            if await saver.flush(using: saveOps) {
-                closeBlocked = false
-                if let id = noteId { await store.close(id: id, client: client) }   // snapshot backup + refresh
-                store.releaseEditor(saver: saver, owner: editorOwner, park: false)
-                close()
-            } else {
-                finished = false
-                closeBlocked = true
-            }
+            let saved = await saver.flush(using: ops)
+            if saved, let id = saver.noteId { await store.close(id: id, client: client) }
+            if lifetime.completeClose(saved: saved, saver: saver, store: store) { close() }
         }
     }
 
@@ -447,30 +439,30 @@ struct NoteDetailView: View {
     /// Do not dismiss here: a replacement editor may already occupy the presentation by the
     /// time this asynchronous work completes. Explicit Close still dismisses in finish().
     private func finishOnDisappear() {
-        guard !finished else { return }
-        finished = true
+        let lifetime = lifetime, saver = saver, store = store, client = client, ops = saveOps
         saveTask?.cancel()
+        guard lifetime.beginDisappear() else { return }
         Task {
-            if await saver.flush(using: saveOps) {
-                if let id = noteId { await store.close(id: id, client: client) }
-                store.releaseEditor(saver: saver, owner: editorOwner, park: false)
+            if await saver.flush(using: ops) {
+                if let id = saver.noteId { await store.close(id: id, client: client) }
+                store.releaseEditor(saver: saver, owner: lifetime.owner, park: false)
             } else {
-                store.releaseEditor(saver: saver, owner: editorOwner, park: true)
+                store.releaseEditor(saver: saver, owner: lifetime.owner, park: true)
             }
         }
     }
 
     private func retrySave() {
         saveTask?.cancel()
-        if closeBlocked { finish() } else { Task { await saver.flush(using: saveOps) } }
+        if lifetime.closeBlocked { finish() } else { Task { await saver.flush(using: saveOps) } }
     }
 
     /// The user confirmed dropping the unsaved edits: close without saving. An existing note keeps
     /// its last saved content; a never-created note simply isn't created.
     private func discardAndClose() {
-        finished = true
+        lifetime.finished = true
         saveTask?.cancel()
-        store.releaseEditor(saver: saver, owner: editorOwner, park: false)
+        store.releaseEditor(saver: saver, owner: lifetime.owner, park: false)
         close()
     }
 
@@ -487,9 +479,9 @@ struct NoteDetailView: View {
     }
 
     private func deleteNote() {
-        finished = true  // skip the auto-save/close path; we're archiving
+        lifetime.finished = true  // skip the auto-save/close path; we're archiving
         saveTask?.cancel()
-        store.releaseEditor(saver: saver, owner: editorOwner, park: false)
+        store.releaseEditor(saver: saver, owner: lifetime.owner, park: false)
         guard let id = noteId else { close(); return }
         Haptics.delete()
         Task { await store.archive(id: id, client: client) }
@@ -498,5 +490,46 @@ struct NoteDetailView: View {
 
     private func apply(_ restored: Note) {
         saver.markSaved(Self.combined(restored))
+    }
+}
+
+/// One editor's Close/disappear ownership, shared by the view and store-level lifecycle tests.
+/// The saver can outlive its view while an already-started flush finishes.
+@MainActor
+@Observable
+final class NoteEditorLifetime {
+    let owner = UUID()
+    var finished = false
+    /// A visible failed Close keeps the editor open and routes Retry through Close again.
+    var closeBlocked = false
+    private(set) var hasDisappeared = false
+
+    func appear() { hasDisappeared = false }
+
+    func beginFinish() -> Bool {
+        guard !finished else { return false }
+        finished = true
+        return true
+    }
+
+    func beginDisappear() -> Bool {
+        hasDisappeared = true
+        return beginFinish()
+    }
+
+    /// Returns whether the view should dismiss after its Close-initiated flush.
+    func completeClose(saved: Bool, saver: NoteSaver, store: NotesStore) -> Bool {
+        if saved {
+            closeBlocked = false
+            store.releaseEditor(saver: saver, owner: owner, park: false)
+            return !hasDisappeared
+        }
+        if hasDisappeared {
+            store.releaseEditor(saver: saver, owner: owner, park: true)
+        } else {
+            finished = false
+            closeBlocked = true
+        }
+        return false
     }
 }
