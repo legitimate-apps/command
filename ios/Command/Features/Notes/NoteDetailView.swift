@@ -186,6 +186,10 @@ struct NoteDetailView: View {
                 // mid-compose restart never loses work — the debounce Task doesn't survive suspension.
                 if phase != .active { saveTask?.cancel(); Task { _ = await saver.flush(using: saveOps) } }
             }
+            // A sheet can't be swiped away while its last save failed — the Retry / Discard banner
+            // is the way out. Parked edits live only in memory, so a swipe followed by the app
+            // being killed would lose the text.
+            .interactiveDismissDisabled(saver.isFailed)
             .confirmationDialog("Discard unsaved changes?", isPresented: $showDiscard, titleVisibility: .visible) {
                 Button("Discard", role: .destructive) { discardAndClose() }
                 Button("Keep Editing", role: .cancel) {}
