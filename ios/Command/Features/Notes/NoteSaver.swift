@@ -21,20 +21,22 @@ import Observation
 
 @MainActor
 @Observable
-final class NoteSaver {
+final class NoteSaver: Identifiable {
+    /// Identity of this editing session, retained across presentations and create retries.
+    let id = UUID()
     enum State: Equatable { case idle, saving, saved, failed(String) }
 
     /// The two server operations a save needs, supplied per call (the view builds them from its
     /// environment's store + client; tests supply fakes). Both throw on failure.
     struct Ops {
         /// Create a note from (title, full text); returns its id.
-        var create: @MainActor (_ title: String?, _ body: String) async throws -> Int
+        var create: @MainActor (_ title: String?, _ body: String, _ key: UUID) async throws -> Int
         /// Update note `id` with (title, full text).
         var update: @MainActor (_ id: Int, _ title: String, _ body: String) async throws -> Void
     }
 
     /// The editor's current text. The view writes every keystroke here; a save always sends the
-    /// value current when it STARTS, never a stale snapshot captured while it was queued.
+    /// latest value when an update STARTS; an uncertain create first replays its original payload.
     var text: String
     private(set) var noteId: Int?
     private(set) var state: State = .idle
@@ -42,6 +44,9 @@ final class NoteSaver {
     private(set) var lastSavedText: String
 
     private var inFlight: Task<Bool, Never>?
+    /// A lost response may follow a committed POST. Retry its exact payload and key, then PATCH
+    /// any newer text. This also supports servers that require identical replay payloads.
+    private var createPayload: (title: String?, body: String)?
 
     init(noteId: Int?, text: String) {
         self.noteId = noteId
@@ -63,7 +68,7 @@ final class NoteSaver {
     /// save already in flight first. Returns false only if THIS attempt failed; true when it
     /// succeeded or there was nothing to save.
     @discardableResult
-    func save(using ops: Ops) async -> Bool {
+    func save(using ops: Ops, stopWhenCancelled: Bool = false) async -> Bool {
         // Whoever sees the running save finish clears it. Awaiting an already-finished task's value
         // needn't suspend, so looping on a stale `inFlight` until its owner resumed to clear it
         // could spin the main actor forever (the owner never got to run).
@@ -71,18 +76,24 @@ final class NoteSaver {
             _ = await running.value
             if inFlight == running { inFlight = nil }
         }
+        if stopWhenCancelled && Task.isCancelled { return !hasUnsavedChanges }
         guard hasUnsavedChanges else { return true }
-        let full = text
+        let id = noteId
+        if id == nil, createPayload == nil {
+            let title = Note.firstLine(of: text)
+            createPayload = (title.isEmpty ? nil : title, text)
+        }
+        let full = id == nil ? createPayload!.body : text
         let trimmed = full.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = Note.firstLine(of: full)
-        let id = noteId
         state = .saving
         let task = Task { @MainActor () -> Bool in
             do {
                 if let id {
                     try await ops.update(id, title, full)
                 } else {
-                    self.noteId = try await ops.create(title.isEmpty ? nil : title, full)
+                    self.noteId = try await ops.create(createPayload?.title, full, self.id)
+                    self.createPayload = nil
                 }
                 self.lastSavedText = trimmed
                 self.state = .saved
@@ -96,6 +107,16 @@ final class NoteSaver {
         let ok = await task.value
         if inFlight == task { inFlight = nil }
         return ok
+    }
+
+    /// Debounce work owns the latest text only until another keystroke cancels its caller.
+    /// Keep an already-started save alive, but leave its follow-up to the newer debounce.
+    func autosave(using ops: Ops) async -> Bool {
+        while !Task.isCancelled {
+            guard await save(using: ops, stopWhenCancelled: true) else { return false }
+            if !hasUnsavedChanges { return true }
+        }
+        return !hasUnsavedChanges
     }
 
     /// Save until nothing unsaved remains (text typed during a save gets its own follow-up save).

@@ -268,6 +268,11 @@ struct CalendarView: View {
             .toolbarBackground(.hidden, for: .navigationBar)   // transparent bar; paper shows through
             .toolbar { todayToolbar }
             .overlay(alignment: .top) { if showSaved { savedToast } }
+            .onChange(of: captureText) { _, text in
+                // These stores share this field. Observe edits, including a change back to the
+                // original text, so a failed submission's key never follows a new draft.
+                app.notes.draft = text; app.log.draft = text; app.schedule.draft = text
+            }
             .onChange(of: captureMode) { _, mode in
                 dateOverridden = false   // a mode switch re-syncs the date to the big calendar
                 if mode == .schedule {
@@ -307,7 +312,7 @@ struct CalendarView: View {
                         if captureMode == .schedule { app.schedule.assigneeId = saved.id }
                         else { app.log.composeActorId = saved.id }
                     }
-                })
+                }).macSheet()
             }
             .task {
                 #if DEBUG
@@ -723,28 +728,34 @@ struct CalendarView: View {
     }
 
     private func send(hidden: Bool = false) {
+        let sentText = captureText, sentMode = captureMode
         Task {
             // Push the shared entry text into the active store, then save.
             let ok: Bool
-            switch captureMode {
+            switch sentMode {
             case .note:
-                app.notes.draft = captureText
+                app.notes.draft = sentText
                 ok = await app.notes.saveDraft(hidden: hidden, client: app.client)
             case .log:
-                app.log.draft = captureText
+                app.log.draft = sentText
                 ok = await app.log.logDraft(hidden: hidden, client: app.client)
             case .schedule:
-                app.schedule.draft = captureText
+                app.schedule.draft = sentText
                 ok = await app.schedule.addToQueue(hidden: hidden, client: app.client)
             }
             guard ok else { return }
             Haptics.success()
-            captureText = ""
-            // Sending ends the "out of sync" override: the date snaps back to the big calendar.
-            dateOverridden = false
-            if captureMode == .schedule { app.schedule.useDay(cal.selectedDay) }
-            else if captureMode == .log { app.log.useDay(cal.selectedDay) }
-            if captureMode != .note { await cal.load(client: app.client) }
+            // A response to the submitted text must not erase typing or switch the mode's
+            // date after the user has moved on to another capture.
+            if captureText == sentText {
+                captureText = ""
+                if captureMode == sentMode {
+                    dateOverridden = false
+                    if sentMode == .schedule { app.schedule.useDay(cal.selectedDay) }
+                    else if sentMode == .log { app.log.useDay(cal.selectedDay) }
+                }
+            }
+            if sentMode != .note { await cal.load(client: app.client) }
             flashSaved(hidden: hidden)
         }
     }

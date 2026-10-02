@@ -17,6 +17,7 @@ final class NoteSaverTests: XCTestCase {
     @MainActor
     private final class FakeBackend {
         var creates: [String] = []
+        var createKeys: [UUID] = []
         var updates: [(id: Int, body: String)] = []
         var failNext = false
         var holdCreate = false
@@ -30,8 +31,9 @@ final class NoteSaverTests: XCTestCase {
 
         var ops: NoteSaver.Ops {
             NoteSaver.Ops(
-                create: { [unowned self] _, body in
+                create: { [unowned self] _, body, key in
                     creates.append(body)
+                    createKeys.append(key)
                     if holdCreate { await withCheckedContinuation { heldCreates.append($0) } }
                     if failNext { failNext = false; throw URLError(.notConnectedToInternet) }
                     return 42
@@ -111,6 +113,105 @@ final class NoteSaverTests: XCTestCase {
         XCTAssertTrue(backend.updates.isEmpty)
     }
 
+    func testCreateRetryReusesExactPayloadAndKeyThenPatchesNewerText() async {
+        let backend = FakeBackend()
+        backend.holdCreate = true
+        backend.failNext = true
+        let saver = NoteSaver(noteId: nil, text: "")
+        saver.text = "Idea"
+        let first = Task { await saver.save(using: backend.ops) }
+        await spin { !backend.heldCreates.isEmpty }
+        saver.text = "Idea, continued"
+        backend.holdCreate = false
+        backend.releaseCreates()
+        let firstOK = await first.value
+        XCTAssertFalse(firstOK)
+        let retryOK = await saver.flush(using: backend.ops)
+        XCTAssertTrue(retryOK)
+        XCTAssertEqual(backend.creates, ["Idea", "Idea"], "retry the POST that may already have committed")
+        XCTAssertEqual(backend.createKeys.count, 2)
+        XCTAssertEqual(backend.createKeys.first, backend.createKeys.last)
+        XCTAssertEqual(backend.updates.map(\.body), ["Idea, continued"])
+        XCTAssertFalse(saver.hasUnsavedChanges)
+    }
+
+    func testRepeatedComposeIntentDuringCreateKeepsSessionAndUpdatesSameNote() async throws {
+        let composer = NoteComposer(), backend = FakeBackend()
+        backend.holdCreate = true
+        composer.begin()
+        let original = try XCTUnwrap(composer.session)
+        original.text = "Idea"
+        let first = Task { await original.save(using: backend.ops) }
+        await spin { !backend.heldCreates.isEmpty }
+        composer.begin() // new intent / recreated shell's presentation request
+        let presentedAgain = try XCTUnwrap(composer.session)
+        XCTAssertTrue(presentedAgain === original)
+        presentedAgain.text = "Idea, continued"
+        let finish = Task { await presentedAgain.flush(using: backend.ops) }
+        backend.holdCreate = false
+        backend.releaseCreates()
+        _ = await first.value; _ = await finish.value
+        XCTAssertEqual(backend.creates, ["Idea"])
+        XCTAssertEqual(backend.updates.map(\.id), [42])
+        XCTAssertEqual(backend.updates.last?.body, "Idea, continued")
+        composer.session = nil // an actual dismissal ends the compose session
+        composer.begin()
+        XCTAssertNotEqual(composer.session?.id, original.id)
+        XCTAssertEqual(composer.session?.text, "")
+    }
+
+    func testCancelledAutosaveStopsAfterInflightCreateAndLeavesNewerTextForNextPause() async {
+        let backend = FakeBackend()
+        backend.holdCreate = true
+        let saver = NoteSaver(noteId: nil, text: "")
+        saver.text = "Prefix"
+        let debounce = Task { await saver.autosave(using: backend.ops) }
+        await spin { !backend.heldCreates.isEmpty }
+        saver.text = "Prefix continued"
+        debounce.cancel()
+        backend.holdCreate = false
+        backend.releaseCreates()
+        _ = await debounce.value
+        XCTAssertEqual(saver.noteId, 42, "the committed request must finish despite cancellation")
+        XCTAssertTrue(backend.updates.isEmpty, "new typing belongs to a newer debounce")
+        XCTAssertTrue(saver.hasUnsavedChanges)
+        _ = await saver.autosave(using: backend.ops)
+        XCTAssertEqual(backend.updates.map(\.body), ["Prefix continued"])
+    }
+
+    func testCancelledAutosaveWaitingBehindCreateDoesNotStartPatch() async {
+        let backend = FakeBackend(); backend.holdCreate = true
+        let saver = NoteSaver(noteId: nil, text: ""); saver.text = "Prefix"
+        let first = Task { await saver.save(using: backend.ops) }
+        await spin { !backend.heldCreates.isEmpty }
+        saver.text = "Prefix continued"
+        let queued = Task { await saver.autosave(using: backend.ops) }
+        for _ in 0..<20 { await Task.yield() }
+        queued.cancel()
+        backend.holdCreate = false; backend.releaseCreates()
+        _ = await first.value; _ = await queued.value
+        XCTAssertTrue(backend.updates.isEmpty)
+        XCTAssertTrue(saver.hasUnsavedChanges)
+        _ = await saver.flush(using: backend.ops)
+        XCTAssertEqual(backend.updates.map(\.body), ["Prefix continued"])
+    }
+
+    func testExplicitFlushCompletesLatestTextEvenWhenCallerWasCancelled() async {
+        let backend = FakeBackend()
+        backend.holdCreate = true
+        let saver = NoteSaver(noteId: nil, text: "")
+        saver.text = "Prefix"
+        let close = Task { await saver.flush(using: backend.ops) }
+        await spin { !backend.heldCreates.isEmpty }
+        saver.text = "Prefix continued"
+        close.cancel()
+        backend.holdCreate = false
+        backend.releaseCreates()
+        _ = await close.value
+        XCTAssertFalse(saver.hasUnsavedChanges)
+        XCTAssertEqual(backend.updates.map(\.body), ["Prefix continued"])
+    }
+
     func test_blankField_isNeverSavedOverContent() async {
         let backend = FakeBackend()
         let saver = NoteSaver(noteId: 7, text: "Keep me")
@@ -124,11 +225,15 @@ final class NoteSaverTests: XCTestCase {
 
 @MainActor
 final class UnsavedNoteEditsTests: XCTestCase {
+    private func parked(id: Int? = nil, text: String) -> NoteSaver {
+        let saver = NoteSaver(noteId: id, text: ""); saver.text = text; return saver
+    }
+
     func test_parkingANewerEditOfTheSameNoteReplacesTheOlder() {
         let store = NotesStore()
-        store.park(noteId: 3, text: "v1")
-        store.park(noteId: nil, text: "draft")
-        store.park(noteId: 3, text: "v2")
+        store.park(saver: parked(id: 3, text: "v1"))
+        store.park(saver: parked(text: "draft"))
+        store.park(saver: parked(id: 3, text: "v2"))
         XCTAssertEqual(store.unsavedEdits.map(\.text), ["draft", "v2"])
         store.discardUnsavedEdits()
         XCTAssertTrue(store.unsavedEdits.isEmpty)

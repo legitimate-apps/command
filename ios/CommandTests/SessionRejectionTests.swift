@@ -71,7 +71,9 @@ final class SessionRejectionTests: XCTestCase {
         // builds from. The server-side revoke is best-effort (`try? await client.logout()`) and
         // signing out offline is ordinary, so the session could still be live: Siri and
         // Shortcuts would go on capturing into the account the user just left.
-        let app = AppState()
+        // Secure-cookie coverage must not depend on the simulator's configured server being
+        // HTTPS; local custom servers commonly use HTTP. Keep this credential on its own host.
+        let app = AppState(client: APIClient(baseURL: URL(string: "https://sign-out-test.invalid")!))
         let url = app.client.baseURL
         let host = try XCTUnwrap(url.host)
         let cookie = try XCTUnwrap(HTTPCookie(properties: [

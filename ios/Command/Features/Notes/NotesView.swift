@@ -9,7 +9,7 @@ struct NotesView: View {
     @Environment(AppState.self) private var app
     @Environment(\.navigator) private var nav
     @State private var selectedNote: Note?
-    @State private var composing = false
+    @Environment(NoteComposer.self) private var composer
     @State private var searchText = ""
     @State private var searchActive = false   // search field is hidden until the 🔍 button reveals it
     @State private var confirmDiscardUnsaved = false
@@ -59,7 +59,7 @@ struct NotesView: View {
                     .disabled(app.notes.notes.isEmpty)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { composing = true } label: {
+                    Button { composer.begin() } label: {
                         Image(systemName: "plus").font(.system(size: 17, weight: .semibold))
                     }
                     .tint(Palette.accent)
@@ -69,12 +69,11 @@ struct NotesView: View {
             .task { await app.notes.load(client: app.client) }
             .refreshable { await app.notes.load(client: app.client) }
             .sheet(item: $selectedNote) { NoteDetailView(note: $0).macSheet(.page).privacyChallenge() }
-            .sheet(isPresented: $composing) { NoteDetailView().macSheet(.page) }
             // ⌘N / "New Note" from the Mac/iPad menu opens the composer. `initial: true` so a
             // cross-section ⌘N (which show(.notes) mounts this view fresh with the flag already
             // set) still consumes it — plain onChange skips the value present at mount.
             .onChange(of: nav?.composeNote, initial: true) { _, want in
-                if want == true { composing = true; nav?.composeNote = false }
+                if want == true { composer.begin(); nav?.composeNote = false }
             }
             // ⌘F / "Find" reveals the hidden search field.
             .onChange(of: nav?.focusSearch, initial: true) { _, want in
@@ -138,18 +137,28 @@ struct NotesView: View {
                 .font(Typeface.body(13))
                 .foregroundStyle(Palette.ink)
             Spacer(minLength: 8)
+            Button("Review") {
+                if let edit = app.notes.unsavedEdits.first {
+                    if let note = app.notes.notes.first(where: { $0.id == edit.noteId }) { open(note) }
+                    else { composer.resume(edit.saver) }
+                }
+            }
+                .font(Typeface.body(13, .semibold))
+                .disabled(app.notes.isRetrying)
             Button("Discard", role: .destructive) { confirmDiscardUnsaved = true }
                 .font(Typeface.body(13, .semibold))
             Button("Retry") { Task { await app.notes.retryUnsavedEdits(client: app.client) } }
                 .font(Typeface.body(13, .semibold))
                 .tint(Palette.accent)
         }
+        .disabled(app.notes.isRetrying)
         .padding(12)
         .background(Palette.danger.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .confirmationDialog("Discard unsaved edits?", isPresented: $confirmDiscardUnsaved, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { app.notes.discardUnsavedEdits() }
+                .disabled(app.notes.isRetrying)
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("These edits never reached the server and will be lost.")
@@ -176,7 +185,7 @@ struct NotesView: View {
             title: "Nothing jotted yet",
             message: "Capture a quick thought on the Calendar tab — typed or spoken — or start a longer one here.",
             actionLabel: "New note"
-        ) { composing = true }
+        ) { composer.begin() }
     }
 }
 

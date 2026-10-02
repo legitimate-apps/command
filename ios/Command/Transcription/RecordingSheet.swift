@@ -283,8 +283,8 @@ struct RecordingSheet: View {
     private func save() {
         Task {
             let notes = app.notes, client = app.client
-            let saved = await flow.saveNote { text, engine in
-                await notes.saveVoiceNote(text, engine: engine, locale: Locale.current.identifier, client: client)
+            let saved = await flow.saveNote { text, engine, key in
+                await notes.saveVoiceNote(text, engine: engine, locale: Locale.current.identifier, idempotencyKey: key, client: client)
                     ? nil : (notes.errorMessage ?? "Couldn't save the note.")
             }
             if saved { dismiss() }

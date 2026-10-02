@@ -45,18 +45,36 @@ final class VoiceCaptureFlowTests: XCTestCase {
         flow.adopt(audio)
         _ = await flow.transcribe(immediateUse: false) { _ in ("buy milk", "parakeet-v3") }
 
-        let failed = await flow.saveNote { _, _ in "Server unreachable" }
+        let failed = await flow.saveNote { _, _, _ in "Server unreachable" }
         XCTAssertFalse(failed)
         XCTAssertEqual(flow.errorMessage, "Server unreachable")
         XCTAssertEqual(flow.transcript, "buy milk")
         XCTAssertTrue(removed.isEmpty)
 
         var savedEngine: String?
-        let saved = await flow.saveNote { _, engine in savedEngine = engine; return nil }
+        let saved = await flow.saveNote { _, engine, _ in savedEngine = engine; return nil }
         XCTAssertTrue(saved)
         XCTAssertEqual(savedEngine, "parakeet-v3")
         XCTAssertEqual(removed, [audio], "released only once the note is committed")
         XCTAssertNil(flow.audioURL)
+    }
+
+    func testNoteKeySurvivesRetryAndResetsForChangedTranscriptAndNewRecording() async {
+        let flow = makeFlow()
+        flow.adopt(audio)
+        flow.transcript = "Idea"
+        var keys: [String] = []
+        _ = await flow.saveNote { _, _, key in keys.append(key); return "Lost response" }
+        _ = await flow.saveNote { _, _, key in keys.append(key); return "Lost response" }
+        XCTAssertEqual(keys[0], keys[1])
+        flow.transcript = "Changed"; flow.transcript = "Idea"
+        _ = await flow.saveNote { _, _, key in keys.append(key); return "Lost response" }
+        XCTAssertNotEqual(keys[1], keys[2])
+        _ = await flow.saveNote { _, _, key in keys.append(key); return nil }
+        XCTAssertEqual(keys[2], keys[3])
+        flow.adopt(URL(fileURLWithPath: "/tmp/another-recording.m4a"))
+        _ = await flow.saveNote { _, _, key in keys.append(key); return nil }
+        XCTAssertNotEqual(keys[3], keys[4])
     }
 
     func test_cancelDuringTranscription_neverHandsTheResultOn() async {

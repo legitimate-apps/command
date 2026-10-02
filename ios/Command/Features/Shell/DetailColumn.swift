@@ -39,6 +39,7 @@ struct DetailColumn: View {
                     .transition(.opacity)
             } else if let noteId = nav.selectedNoteId {
                 NoteDetailColumn(noteId: noteId)
+                    .id(noteId)
                     .transition(.opacity)
             } else if let personId = nav.selectedPersonId {
                 PersonDetailColumn(personId: personId)
@@ -82,13 +83,18 @@ private struct AssistantChatDetail: View {
 private struct NoteDetailColumn: View {
     @Environment(AppState.self) private var app
     let noteId: Int
+    @State private var selection = NoteSelection()
+    private var liveNote: Note? { app.notes.notes.first { $0.id == noteId } }
 
     var body: some View {
-        if let note = app.notes.notes.first(where: { $0.id == noteId }) {
-            NoteDetailView(note: note, inDetailColumn: true).id(noteId)
-        } else {
-            DetailEmptyState(destination: .notes)
+        Group {
+            if let note = liveNote ?? selection.note {
+                NoteDetailView(note: note, inDetailColumn: true)
+            } else {
+                DetailEmptyState(destination: .notes)
+            }
         }
+        .onChange(of: liveNote, initial: true) { _, note in selection.receive(note) }
     }
 }
 
