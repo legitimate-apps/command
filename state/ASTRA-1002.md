@@ -1,3 +1,8 @@
+> **STOPPED at operator credit-limit instruction, 2026-10-02.** Latest production commit:
+> `62885ec`, pushed to `astra/capture-reliability-1002`; PR #1 remains open. No merge/deploy.
+> Voice recovery primitives are implemented and verified incrementally, but RecordingSheet
+> remains nonpersistent: app-level voice recovery is NOT finished. Final handoff is at the end.
+
 # Command reliability push — 2026-10-02
 
 **FINAL — selected work finished, verified, committed and pushed; PR #1 open.**
@@ -402,3 +407,32 @@ process remains. Changes are on the same review branch/PR; no merge or deploymen
 - App lifecycle callers have not been wired yet. Next: a shared note-capture coordinator must own
   recorder finalization BEFORE store retirement; account deactivation alone cannot retain a live
   recorder's temporary file. Continue with coordinator tests and explicit restore selection.
+
+## FINAL — operator credit-limit stop
+
+- Stopped immediately after the explicit instruction; started no further implementation or tests.
+- All sound code is committed and pushed through **62885ec**. Worktree was clean before this final
+  state update. PR: https://github.com/legitimate-apps/command/pull/1 (open, no merge/deployment).
+- Latest verification: **50 native voice XCTest cases passed** on 62885ec. **8 process-kill cases,
+  1 actual REST/SQLite reconciliation case, and iOS + Catalyst builds passed** on a5265d7, before
+  the final account-retirement change. That final change has native coverage; broader recheck
+  remains for the next authorized session. Initial typed/MCP integration evidence remains above.
+- Finished voice guarantees: account-scoped protected stopped audio; atomic review and original
+  request checkpoints; current-manifest restoration; stale-owner fencing; original POST replay
+  plus note-ID/PATCH reconciliation; terminal rename before cleanup; explicit retained suspension;
+  store retirement with stale-write fencing and explicit account-audio deletion/retry.
+- **Unfinished:** no shared recorder/account coordinator or recovery picker/sheet wiring. The app
+  still uses the nonpersistent default. Active M4A process-death decoding, acknowledged assistant
+  handoff, rendered recovery UI, and full account/multiwindow app verification remain incomplete.
+  There are no half-written coordinator/UI files to recover.
+- **Exact next step:** read the voice design and current source/tests, acquire a fresh DerivedData
+  lease, then test-first implement the shared NOTE capture coordinator. It must own recorder
+  finalization before account retirement, retain on sheet disappearance, preserve same-account
+  multiwindow ownership, and offer explicit restore selection. Wire the durable note operations
+  to the capture's original client/session only after those lifecycle tests pass. Keep assistant
+  handoff outside this activation until its durable acknowledgment contract is implemented.
+- Cleanup OBSERVED: active helper finish_voice interrupted; finish_mcp already completed. Last
+  build session completed. DerivedData lease command-astra-1002-tests released. No owned probe,
+  local server, simulator, emulator or browser remains running/leased. Earlier simulator lease
+  was released before the reset-window work; no simulator was booted in this follow-on.
+- The pending read-only helper design review was stopped; no result was integrated or relied on.
