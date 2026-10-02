@@ -228,6 +228,35 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         XCTAssertFalse(sent); XCTAssertFalse(saved)
         XCTAssertEqual(try owner.load().recordings.count, 1)
     }
+    func testCachedListingCannotEraseNewerAcknowledgedNoteIdentity() async throws {
+        let owner = store(), original = VoiceCaptureFlow(recovery: owner)
+        original.adopt(try source()); original.transcript = "original"
+        let cached = try XCTUnwrap(owner.load().recordings.first)
+        _ = await original.saveRecoveredNote(locale: nil, using: .init(create: { _ in
+            original.transcript = "newer edits"; return 42
+        }, update: { _, _ in throw URLError(.notConnectedToInternet) }))
+        let restored = VoiceCaptureFlow(recovery: owner, restoring: cached)
+        var created = false, updatedID = 0
+        let saved = await restored.saveRecoveredNote(locale: nil, using: .init(create: { _ in
+            created = true; return 99
+        }, update: { id, text in updatedID = id; XCTAssertEqual(text, "newer edits") }))
+        XCTAssertTrue(saved); XCTAssertFalse(created); XCTAssertEqual(updatedID, 42)
+    }
+    func testBlankInitialSubmissionDoesNotPoisonCorrectedCapture() async throws {
+        let owner = store(), flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source()); flow.transcript = "  \n "
+        var creates = 0
+        let operations = VoiceCaptureFlow.NoteOperations(create: { request in
+            creates += 1
+            if request.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw URLError(.badURL) }
+            return 42
+        }, update: { _, _ in })
+        let empty = await flow.saveRecoveredNote(locale: nil, using: operations)
+        XCTAssertFalse(empty); XCTAssertEqual(creates, 0)
+        flow.transcript = "corrected text"
+        let saved = await flow.saveRecoveredNote(locale: nil, using: operations)
+        XCTAssertTrue(saved); XCTAssertEqual(creates, 1)
+    }
     func testManifestCannotReferenceAnOutsideFile() throws {
         let owner = store()
         XCTAssertThrowsError(try owner.audioURL(for: .init(version: 1, id: UUID(), filename: "../../outside.m4a")))

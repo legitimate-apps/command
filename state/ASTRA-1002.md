@@ -335,3 +335,13 @@ process remains. Changes are on the same review branch/PR; no merge or deploymen
   edited-pending-request case. Native output: `voice-reconcile-final-native.log`.
 - Review identified next corrections before UI wiring: restore must reread current manifest by ID
   instead of trusting a cached listing; reject blank initial submission before freezing its payload.
+
+## Reset-window restoration correctness — 13:23 EDT
+- Added independent-review regressions first: stale listing could erase acknowledged note identity,
+  and a blank first request permanently froze an invalid payload (**2 tests, 5 failures** before fix).
+- Restoration now rereads the current manifest by capture ID synchronously before claiming ownership.
+  Blank initial review is rejected before a pending request is created; corrected text remains savable.
+- OBSERVED **42 native XCTest cases passed**, **8 strict process-death cases passed**. Logs:
+  `voice-restore-validation-{red,green,process}.log` under `/tmp/command-astra-1002/`.
+- Next: integrated target compilation, then shared app lifecycle/microphone ownership and note-only
+  recovery UI integration with proper account deletion/teardown. No partial UI activation is present.

@@ -133,6 +133,16 @@ final class VoiceRecordingRecoveryStore {
         return (recordings, unreadable)
     }
 
+    /// Listing entries are display snapshots. Restoration rereads the current manifest before
+    /// claiming ownership so a stale picker cannot erase a newer submission or note identity.
+    func recording(id: UUID) throws -> Recording {
+        let manifest = directory.appendingPathComponent(id.uuidString).appendingPathComponent("manifest.json")
+        let record = try JSONDecoder().decode(Recording.self, from: Data(contentsOf: manifest))
+        guard record.id == id else { throw RecoveryError.invalidRecord }
+        _ = try audioURL(for: record)
+        return record
+    }
+
     func audioURL(for record: Recording) throws -> URL {
         guard record.version == 1, ["recording.m4a", "recording.wav", "recording.caf"].contains(record.filename)
         else { throw RecoveryError.invalidRecord }

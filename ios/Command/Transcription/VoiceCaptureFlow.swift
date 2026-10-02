@@ -61,6 +61,7 @@ final class VoiceCaptureFlow {
         self.recovery = recovery
         if let recovery, let recording {
             do {
+                let recording = try recovery.recording(id: recording.id)
                 audioURL = try recovery.audioURL(for: recording)
                 captureID = recording.id
                 recoveredRecordingID = recording.id
@@ -209,6 +210,10 @@ final class VoiceCaptureFlow {
         defer { saving = false }
         do {
             if noteSubmission == nil {
+                guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    errorMessage = "Add some text before saving this recording."
+                    return false
+                }
                 let engine = engineUsed.isEmpty ? "sfspeech" : engineUsed
                 let key = try noteCreate.key(for: NotePayload(text: transcript, engine: engine))
                 noteSubmission = .init(body: transcript, engine: engine, locale: locale, key: key)
