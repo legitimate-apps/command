@@ -76,6 +76,30 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: manifest), Data("damaged manifest".utf8))
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(flow.audioURL).path))
     }
+    func testUncertainRequestIdentitySurvivesFreshFlowForSamePayload() async throws {
+        let owner = store(), flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source()); flow.transcript = "same payload"
+        var originalKey = ""
+        _ = await flow.saveNote { _, _, key in originalKey = key; return "response lost" }
+        let restored = VoiceCaptureFlow(recovery: store(), restoring: try XCTUnwrap(store().recordings().first))
+        var replayKey = ""
+        _ = await restored.saveNote { text, _, key in
+            XCTAssertEqual(text, "same payload"); replayKey = key; return "still unavailable"
+        }
+        XCTAssertFalse(originalKey.isEmpty)
+        XCTAssertEqual(originalKey, replayKey)
+    }
+    func testFailedRequestCheckpointPreventsNetworkSubmission() async throws {
+        let owner = store(), flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source()); flow.transcript = "not safe to send"
+        let manifest = owner.directory.appendingPathComponent(flow.captureID.uuidString).appendingPathComponent("manifest.json")
+        try Data("damaged manifest".utf8).write(to: manifest)
+        var sent = false
+        let saved = await flow.saveNote { _, _, _ in sent = true; return nil }
+        XCTAssertFalse(saved); XCTAssertFalse(sent)
+        XCTAssertNotNil(flow.errorMessage)
+        XCTAssertNotNil(flow.audioURL)
+    }
     func testManifestCannotReferenceAnOutsideFile() throws {
         let owner = store()
         XCTAssertThrowsError(try owner.audioURL(for: .init(version: 1, id: UUID(), filename: "../../outside.m4a")))

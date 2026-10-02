@@ -58,6 +58,7 @@ final class VoiceCaptureFlow {
                 recoveredRecordingID = recording.id
                 transcript = recording.transcript ?? ""
                 engineUsed = recording.engine ?? ""
+                noteCreate = recording.createAttempt ?? CreateAttempt()
             } catch { errorMessage = "Couldn't reopen the saved recording. Its files have been kept." }
         }
     }
@@ -149,6 +150,9 @@ final class VoiceCaptureFlow {
         do {
             let engine = engineUsed.isEmpty ? "sfspeech" : engineUsed
             let key = try noteCreate.key(for: NotePayload(text: text, engine: engine))
+            if let recovery, let recoveredRecordingID {
+                try recovery.saveCreateAttempt(id: recoveredRecordingID, attempt: noteCreate)
+            }
             let failure = await save(text, engine, key)
             guard !isCancelled, !Task.isCancelled, captureID == capture,
                   reviewRevision == revision else { return false }

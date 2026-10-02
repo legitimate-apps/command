@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Real process-death characterization against copied, unmodified production Swift sources.
 
-Default: 6 passing cases + 1 explicitly expected failure. --require-recovery turns those
-known gaps into ordinary failing acceptance tests. No simulator, microphone or server.
+All seven baseline cases now pass through the opt-in production restore API.
+--require-recovery remains compatible with the original failing-baseline invocation. No simulator, microphone or server.
 """
 import argparse
 import json
@@ -121,7 +121,6 @@ class VoiceProcessRecoveryTests(unittest.TestCase):
         self.assertEqual((self.after["transcript"], self.after["engine"]),
                          ("Latest edited review", "sfspeech"))
 
-    @unittest.expectedFailure
     def test_uncertain_create_reuses_key_after_process_death(self):
         self.assertEqual(self.after["key"], self.before["key"])
 

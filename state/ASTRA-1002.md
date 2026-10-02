@@ -261,3 +261,18 @@ process remains. Changes are on the same review branch/PR; no merge or deploymen
 - Next immediate action: compile the integrated iOS target (no simulator boot) to verify the new
   production source on its actual platform. Then tackle original request reconciliation before
   enabling this store in RecordingSheet. Do not describe these primitives as complete app recovery.
+
+## Reset-window implementation step 3 — 13:02 EDT
+- Persist and restore CreateAttempt (key plus encoded original text/engine payload) before a
+  request may begin. A failed metadata checkpoint now prevents the network submission.
+- OBSERVED original process-death baseline in strict mode: **all 7 cases pass, no expected
+  failures**. The unchanged reviewed capture reuses its key after hard kill and fresh process.
+- OBSERVED **30 native XCTest cases pass**, including same-payload restoration and proof that a
+  failed request checkpoint does not invoke the transport. Logs: `voice-key-{step,xctest}.log`.
+- OBSERVED step-2 integrated iOS build succeeded (`voice-recovery-ios-build.log`); checking the
+  latest step-3 target is next. No simulator has been booted in this implementation window.
+- IMPORTANT REMAINING: these guarantees use opt-in production restore APIs in the process probe.
+  RecordingSheet/account coordinator still do not opt in. Editing text after an uncertain create
+  still follows existing changed-payload/new-intent behavior; preserving one note while applying
+  later edits requires recording the returned note ID and PATCH reconciliation, not just a key.
+  Assistant durable handoff, same-capture multiwindow ownership and actual M4A kill behavior remain.

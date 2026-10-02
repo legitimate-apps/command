@@ -1,5 +1,10 @@
 # Voice process-death reproduction
 
+**Current implementation checkpoint:** all seven original cases pass in strict mode through the
+opt-in production audio/review/attempt restore API. RecordingSheet is not yet wired to it; this
+is not end-to-end app recovery. Later edits after an uncertain create still need note-ID/PATCH
+reconciliation. The historical baseline and intermediate results below document progression.
+
 An opt-in native macOS harness for the current voice recovery gap. It copies unmodified
 production `VoiceCaptureFlow`, `CreateAttempt`, and shared validation source into a tiny SwiftPM
 executable, then Python tests kill and relaunch that executable. No third-party dependency,
@@ -54,3 +59,10 @@ The four-failure output above is the historical baseline. See the run state for 
 Production restoration now reloads atomic review text and engine checkpoints as well as audio.
 Current result: **6 passing cases, 1 expected failure** (uncertain-create identity). The sheet
 still uses its nonpersistent default. Native source tests cover review restore and write failure.
+
+## Implementation step 3 (13:02 EDT)
+
+The unchanged reviewed capture now restores its persisted create key and payload. A failed
+request checkpoint blocks submission. Strict mode: **7 passed, no expected failures**. Native
+source suite: **30 passed**. Production app/account/UI integration and later-edit reconciliation
+remain required; passing this initial matrix alone does not establish complete voice recovery.

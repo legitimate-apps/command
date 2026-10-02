@@ -11,6 +11,7 @@ final class VoiceRecordingRecoveryStore {
         let filename: String
         var transcript: String? = nil
         var engine: String? = nil
+        var createAttempt: CreateAttempt? = nil
     }
     enum RecoveryError: Error { case invalidRecord }
     let directory: URL
@@ -54,6 +55,19 @@ final class VoiceRecordingRecoveryStore {
         _ = try audioURL(for: record)
         record.transcript = transcript
         record.engine = engine
+        try JSONEncoder().encode(record).write(to: manifest,
+            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try files.setAttributes([.posixPermissions: 0o600], ofItemAtPath: manifest.path)
+    }
+
+    /// A failed checkpoint must prevent the request: otherwise relaunch could manufacture a
+    /// new key for a create whose outcome is unknown. The encoded attempt includes its payload.
+    func saveCreateAttempt(id: UUID, attempt: CreateAttempt) throws {
+        let manifest = directory.appendingPathComponent(id.uuidString).appendingPathComponent("manifest.json")
+        var record = try JSONDecoder().decode(Recording.self, from: Data(contentsOf: manifest))
+        guard record.id == id else { throw RecoveryError.invalidRecord }
+        _ = try audioURL(for: record)
+        record.createAttempt = attempt
         try JSONEncoder().encode(record).write(to: manifest,
             options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         try files.setAttributes([.posixPermissions: 0o600], ofItemAtPath: manifest.path)
