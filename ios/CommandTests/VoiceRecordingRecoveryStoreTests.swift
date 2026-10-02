@@ -100,6 +100,36 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         XCTAssertNotNil(flow.errorMessage)
         XCTAssertNotNil(flow.audioURL)
     }
+    func testRecoveredDiskCheckpointsSubmittedReviewAndKeyTogether() async throws {
+        let owner = store(), flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source()); flow.transcript = "old review"
+        let manifest = owner.directory.appendingPathComponent(flow.captureID.uuidString).appendingPathComponent("manifest.json")
+        let old = try Data(contentsOf: manifest)
+        try Data("unreadable".utf8).write(to: manifest)
+        flow.transcript = "submitted review"
+        XCTAssertNotNil(flow.errorMessage)
+        try old.write(to: manifest)
+        var submittedKey = ""
+        _ = await flow.saveNote { _, _, key in submittedKey = key; return "response lost" }
+        let restored = VoiceCaptureFlow(recovery: store(), restoring: try XCTUnwrap(store().recordings().first))
+        XCTAssertEqual(restored.transcript, "submitted review")
+        _ = await restored.saveNote { text, _, key in
+            XCTAssertEqual(text, "submitted review"); XCTAssertEqual(key, submittedKey); return "response lost"
+        }
+    }
+    func testFailedAdoptionStaysVisibleAndCannotSubmitWithoutCheckpoint() async throws {
+        let original = try source()
+        try Data("not a directory".utf8).write(to: root.appendingPathComponent("recovery"))
+        let flow = VoiceCaptureFlow(recovery: store())
+        flow.adopt(original)
+        XCTAssertNotNil(flow.errorMessage)
+        _ = await flow.transcribe(immediateUse: false) { _ in ("recovered in memory", "sfspeech") }
+        XCTAssertNotNil(flow.errorMessage)
+        var sent = false
+        let saved = await flow.saveNote { _, _, _ in sent = true; return nil }
+        XCTAssertFalse(sent); XCTAssertFalse(saved)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
+    }
     func testManifestCannotReferenceAnOutsideFile() throws {
         let owner = store()
         XCTAssertThrowsError(try owner.audioURL(for: .init(version: 1, id: UUID(), filename: "../../outside.m4a")))

@@ -276,3 +276,17 @@ process remains. Changes are on the same review branch/PR; no merge or deploymen
   still follows existing changed-payload/new-intent behavior; preserving one note while applying
   later edits requires recording the returned note ID and PATCH reconciliation, not just a key.
   Assistant durable handoff, same-capture multiwindow ownership and actual M4A kill behavior remain.
+
+## Reset-window disk-failure hardening — 13:07 EDT
+- Independent review found two real failure paths. Added regressions first: both failed against
+  the prior source (**2 tests, 7 assertion failures**, `voice-disk-controls-red.log`).
+- A request checkpoint now atomically stores its submitted review/engine AND attempt, preventing
+  a recovered disk from pairing an old review with a newer pending key. A failed durable adoption
+  remains visible after transcription and blocks note submission without a checkpoint.
+- OBSERVED fixed source: **32 native tests passed** and **7 strict process-death cases passed**.
+  Logs: `/tmp/command-astra-1002/voice-disk-{green,process}.log`.
+- OBSERVED step-3 integrated iOS build succeeded (`voice-key-ios-build.log`). Latest hardening is
+  native-verified; subsequent app build remains to do.
+- Remaining review finding: one corrupt manifest currently blocks discovery of intact siblings.
+  Fix discovery to report unreadable records separately before wiring recovery UI. Capture owner
+  fencing, original-request/later-edit reconciliation and durable assistant transfer remain too.

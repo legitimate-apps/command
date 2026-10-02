@@ -143,6 +143,10 @@ final class VoiceCaptureFlow {
     /// A failed current save keeps the recording and shows the error for retry.
     func saveNote(using save: (_ text: String, _ engine: String, _ key: String) async -> String?) async -> Bool {
         guard !saving, !isCancelled, !Task.isCancelled else { return false }
+        if recovery != nil && recoveredRecordingID == nil {
+            errorMessage = "This recording has no recovery copy yet. Keep Command open; it has not been sent."
+            return false
+        }
         let capture = captureID, revision = reviewRevision
         let text = transcript
         saving = true
@@ -151,7 +155,7 @@ final class VoiceCaptureFlow {
             let engine = engineUsed.isEmpty ? "sfspeech" : engineUsed
             let key = try noteCreate.key(for: NotePayload(text: text, engine: engine))
             if let recovery, let recoveredRecordingID {
-                try recovery.saveCreateAttempt(id: recoveredRecordingID, attempt: noteCreate)
+                try recovery.saveCreateAttempt(id: recoveredRecordingID, attempt: noteCreate, transcript: text, engine: engine)
             }
             let failure = await save(text, engine, key)
             guard !isCancelled, !Task.isCancelled, captureID == capture,
@@ -182,7 +186,11 @@ final class VoiceCaptureFlow {
     }
 
     private func persistReview() {
-        guard let recovery, let recoveredRecordingID else { return }
+        guard let recovery else { return }
+        guard let recoveredRecordingID else {
+            if audioURL != nil { errorMessage = "Couldn't keep a recovery copy of this recording. Keep Command open." }
+            return
+        }
         do { try recovery.saveReview(id: recoveredRecordingID, transcript: transcript, engine: engineUsed) }
         catch { errorMessage = "Couldn't keep your latest review edits. Keep Command open until they save." }
     }
