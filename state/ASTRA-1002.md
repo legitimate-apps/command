@@ -133,3 +133,12 @@ compile Catalyst, then push this branch and open a PR. No new item after 12:10; 
   `/tmp/command-astra-1002/catalyst-final-build.log`.
 - Latest timing: start nothing new after 12:15; wrap at 12:25. Full combined iOS verification and
   durable evidence/PR update are the remaining steps, then stop owned resources.
+
+## Final combined verification — 12:12 EDT
+- OBSERVED **316 iOS tests passed, zero failures**, including all recovery, account isolation,
+  existing capture/idempotency tests and expanded voice suite. Full log:
+  `/tmp/command-astra-1002/ios-final-tests.log`; xcresult
+  `Logs/Test/Test-Command-2026.10.02_12-10-22--0400.xcresult` in leased DD.
+- Durable public-safe test output excerpts, exact invocation shape, screenshot evidence and
+  verification limits are committed in `state/evidence/astra-1002/verification.md`.
+- Design spec now states actual recovery coverage and limits; MCP guide already updated.
