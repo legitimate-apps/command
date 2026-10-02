@@ -54,6 +54,28 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
         XCTAssertEqual(try owner.recordings().count, 1)
     }
+    func testReviewRestoresLatestEditsAndEngineWithAudio() async throws {
+        let owner = store(), flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source())
+        _ = await flow.transcribe(immediateUse: false) { _ in ("spoken", "parakeet-v3") }
+        flow.transcript = "edited after transcription"
+        let record = try XCTUnwrap(store().recordings().first)
+        let restored = VoiceCaptureFlow(recovery: store(), restoring: record)
+        XCTAssertEqual(restored.transcript, "edited after transcription")
+        XCTAssertEqual(restored.engineUsed, "parakeet-v3")
+        XCTAssertEqual(restored.captureID, flow.captureID)
+        XCTAssertNotNil(restored.audioURL)
+    }
+    func testReviewWriteFailureKeepsExistingAudioAndSurfacesError() throws {
+        let owner = store(), flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source())
+        let manifest = owner.directory.appendingPathComponent(flow.captureID.uuidString).appendingPathComponent("manifest.json")
+        try Data("damaged manifest".utf8).write(to: manifest)
+        flow.transcript = "keep these edits in memory"
+        XCTAssertNotNil(flow.errorMessage)
+        XCTAssertEqual(try Data(contentsOf: manifest), Data("damaged manifest".utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(flow.audioURL).path))
+    }
     func testManifestCannotReferenceAnOutsideFile() throws {
         let owner = store()
         XCTAssertThrowsError(try owner.audioURL(for: .init(version: 1, id: UUID(), filename: "../../outside.m4a")))

@@ -48,3 +48,9 @@ The probe now uses the production account-scoped audio store and explicit flow r
 Stopped/transcribing audio passes SIGKILL/relaunch checks: **5 cases pass, 2 remain expected
 failures** (review state and retry identity). The recording sheet is not wired to this store yet.
 The four-failure output above is the historical baseline. See the run state for current progress.
+
+## Implementation step 2 (12:59 EDT)
+
+Production restoration now reloads atomic review text and engine checkpoints as well as audio.
+Current result: **6 passing cases, 1 expected failure** (uncertain-create identity). The sheet
+still uses its nonpersistent default. Native source tests cover review restore and write failure.

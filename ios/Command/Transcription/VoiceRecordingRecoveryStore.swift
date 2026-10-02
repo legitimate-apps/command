@@ -9,6 +9,8 @@ final class VoiceRecordingRecoveryStore {
         let version: Int
         let id: UUID
         let filename: String
+        var transcript: String? = nil
+        var engine: String? = nil
     }
     enum RecoveryError: Error { case invalidRecord }
     let directory: URL
@@ -43,6 +45,18 @@ final class VoiceRecordingRecoveryStore {
         try files.setAttributes([.posixPermissions: 0o600],
                                 ofItemAtPath: folder.appendingPathComponent("manifest.json").path)
         return record
+    }
+
+    func saveReview(id: UUID, transcript: String, engine: String) throws {
+        let manifest = directory.appendingPathComponent(id.uuidString).appendingPathComponent("manifest.json")
+        var record = try JSONDecoder().decode(Recording.self, from: Data(contentsOf: manifest))
+        guard record.id == id else { throw RecoveryError.invalidRecord }
+        _ = try audioURL(for: record)
+        record.transcript = transcript
+        record.engine = engine
+        try JSONEncoder().encode(record).write(to: manifest,
+            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try files.setAttributes([.posixPermissions: 0o600], ofItemAtPath: manifest.path)
     }
 
     func recordings() throws -> [Recording] {

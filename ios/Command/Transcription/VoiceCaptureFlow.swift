@@ -24,9 +24,11 @@ final class VoiceCaptureFlow {
             if transcript != oldValue {
                 reviewRevision = UUID()
                 noteCreate.reset()
+                if !applyingTranscription { persistReview() }
             }
         }
     }
+    private var applyingTranscription = false
     /// Changes whenever another capture replaces this one, even if it reuses a file URL.
     private(set) var captureID = UUID()
     private var reviewRevision = UUID()
@@ -54,6 +56,8 @@ final class VoiceCaptureFlow {
                 audioURL = try recovery.audioURL(for: recording)
                 captureID = recording.id
                 recoveredRecordingID = recording.id
+                transcript = recording.transcript ?? ""
+                engineUsed = recording.engine ?? ""
             } catch { errorMessage = "Couldn't reopen the saved recording. Its files have been kept." }
         }
     }
@@ -113,10 +117,13 @@ final class VoiceCaptureFlow {
             let result = try await transcribe(url)
             guard !isCancelled, !Task.isCancelled, captureID == capture,
                   reviewRevision == revision, transcriptionAttempt == attempt else { return nil }
+            applyingTranscription = true
             transcript = result.text
             engineUsed = result.engine
+            applyingTranscription = false
             errorMessage = nil
             transcriptionFailed = false
+            persistReview()
             if immediateUse, let cleaned = try? VoiceInputValidator.cleaned(result.text) {
                 discardAudio()
                 return cleaned
@@ -168,6 +175,12 @@ final class VoiceCaptureFlow {
         captureID = UUID()
         isCancelled = true
         discardAudio()
+    }
+
+    private func persistReview() {
+        guard let recovery, let recoveredRecordingID else { return }
+        do { try recovery.saveReview(id: recoveredRecordingID, transcript: transcript, engine: engineUsed) }
+        catch { errorMessage = "Couldn't keep your latest review edits. Keep Command open until they save." }
     }
 
     @discardableResult

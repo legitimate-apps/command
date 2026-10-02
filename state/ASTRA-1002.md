@@ -246,3 +246,18 @@ process remains. Changes are on the same review branch/PR; no merge or deploymen
   is not yet wired. This is a verified production primitive, NOT a shipped end-to-end voice fix.
 - Next: persist review text/engine atomically and turn the corresponding process assertion green;
   then pending original request/key, account coordinator, sheet dismissal semantics and app tests.
+
+## Reset-window implementation step 2 — 12:59 EDT
+- Added atomic review text/engine checkpoints to the same recording manifest and production flow
+  restoration. Transcription results checkpoint text+engine together; later editor changes persist.
+  Corrupt/write failures retain audio and surface an error rather than silently deleting evidence.
+- OBSERVED hard-kill suite now **6 passing cases, 1 expected failure**: stopped audio, in-flight
+  transcription audio and edited review all restore through the production API. Uncertain-create
+  identity is still missing and intentionally red. Log: `voice-review-step.log` in run scratch.
+- OBSERVED **28 native XCTest cases passed**, including existing voice behavior plus review restore
+  and failed-write preservation. Log: `/tmp/command-astra-1002/voice-review-xctest.log`.
+- App/account/sheet integration is STILL NOT wired; microphone-in-progress recovery, durable
+  assistant handoff, original pending create reconciliation, and full app verification remain.
+- Next immediate action: compile the integrated iOS target (no simulator boot) to verify the new
+  production source on its actual platform. Then tackle original request reconciliation before
+  enabling this store in RecordingSheet. Do not describe these primitives as complete app recovery.
