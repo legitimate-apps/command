@@ -79,12 +79,16 @@ class VoiceProcessRecoveryTests(unittest.TestCase):
                 self.assertTrue(self.before["key"])
             if scenario == "review":
                 self.assertEqual(self.before["transcript"], "Latest edited review")
+                self.assertEqual(self.before["engine"], "sfspeech")
             child.kill()
             child.communicate(timeout=5)
             self.assertEqual(child.returncode, -signal.SIGKILL)
             self.assertTrue(self.audio.exists(), "SIGKILL must bypass all app cleanup callbacks")
             self.after = self.run_probe("retry" if scenario == "uncertain" else "relaunch")
             self.assertNotEqual(self.before["pid"], self.after["pid"])
+            if scenario == "uncertain":
+                self.assertIsInstance(self.after.get("key"), str)
+                self.assertTrue(self.after["key"], "retry must reach the request boundary")
 
     @staticmethod
     def stop_child(child):
@@ -96,7 +100,11 @@ class VoiceProcessRecoveryTests(unittest.TestCase):
         self.observation.unlink(missing_ok=True)
         subprocess.run([str(PROBE), mode, str(self.directory)], check=True,
                        capture_output=True, text=True, timeout=10)
-        return json.loads(self.observation.read_text())
+        value = json.loads(self.observation.read_text())
+        for key in ("audio", "transcript", "engine", "pid"):
+            self.assertIn(key, value, f"probe observation missing {key}")
+            self.assertIsInstance(value[key], str)
+        return value
 
     @unittest.expectedFailure
     def test_stopped_recording_is_discoverable_after_process_death(self):
@@ -117,6 +125,7 @@ class VoiceProcessRecoveryTests(unittest.TestCase):
 
     def test_failed_save_reuses_key_without_process_death(self):
         result = self.run_probe("same-process-retry")
+        self.assertTrue(result["firstKey"])
         self.assertEqual(result["firstKey"], result["secondKey"])
         self.assertTrue(self.audio.exists())
 

@@ -199,3 +199,33 @@ No unfinished source change is being handed off. No task has been started merely
   remains missing; this is a reproducer, not a claim that the feature is implemented.
 - Logs: `/tmp/command-astra-1002/voice-process-{characterization,required}.log`.
 - One leased native DerivedData directory is in use for the harness and will be released.
+
+## Bounded follow-on FINAL — 12:39 EDT
+
+Done:
+- `5dc9105`: real SIGKILL/fresh-process voice recovery reproductions using production flow code.
+- Independent review hardened observation shape and pre-kill engine checks so harness failures
+  cannot be counted as expected durability failures.
+- `ios/recovery-repro/README.md` documents lease/run commands, expected-failure semantics,
+  strict acceptance mode, and the exact production/integration limits.
+- `docs/decisions/2026-10-02-voice-recovery.md` defines ownership, storage, lifecycle, retention,
+  privacy, original payload/key replay, acknowledged assistant handoff, and implementation gates.
+- Durable evidence: `state/evidence/astra-1002/voice-process-reproduction.md`.
+- OBSERVED final rerun: **7 cases, 3 passing controls, 4 expected failures** (0.137s); strict
+  `--require-recovery` mode: **4 failures** (0.143s, exit 1), confirming current missing durability.
+  Swift executable compiled successfully from actual production sources. `git diff --check` clean.
+
+In progress: **none**. Production voice persistence was not started. A partially wired store
+would not safely resolve unfinished M4A finalization, view-lifecycle deletion, account ownership,
+and downstream acknowledgment in this deadline. The requested reproduction/design deliverable
+is complete; the missing feature is explicitly represented by failing acceptance requirements.
+
+Exact next step: read the design and run both reproducer modes from `ios/recovery-repro/README.md`.
+Then add account-scoped durable-store tests (scope/recreated accounts, interrupted writes, ownership,
+terminal cleanup) and verify actual AVAudioRecorder M4A behavior under process kill before wiring
+persistence into the recorder/sheet. Adapt the probe to the real coordinator restoration entry
+point; never restore from observer JSON. Do not remove expected-failure markers until implemented.
+
+Cleanup: read-only review helper finished; no helper implementation pending. The one native
+DerivedData lease was released. No simulator/emulator was created, and no probe/build/server
+process remains. Changes are on the same review branch/PR; no merge or deployment.
