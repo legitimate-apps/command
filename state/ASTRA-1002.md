@@ -1,5 +1,9 @@
 # Command reliability push — 2026-10-02
 
+**FINAL — selected work finished, verified, committed and pushed; PR #1 open.**
+
+See the final handoff below; earlier sections preserve the run history.
+
 ## Scope and authority
 - Worktree branch: `astra/capture-reliability-1002`, based on `47170c2` (build 70).
 - Own this worktree only. The main checkout belongs to a separate session.
@@ -142,3 +146,42 @@ compile Catalyst, then push this branch and open a PR. No new item after 12:10; 
 - Durable public-safe test output excerpts, exact invocation shape, screenshot evidence and
   verification limits are committed in `state/evidence/astra-1002/verification.md`.
 - Design spec now states actual recovery coverage and limits; MCP guide already updated.
+
+## Final handoff — 12:14 EDT
+
+### Done
+- `f5a12fc`: durable unsent editor/calendar note recovery plus account/session isolation.
+- `977c54e`: voice permission/transcription/save race protection.
+- `ededd4b`: newly generated completion activities inherit hidden assignment visibility.
+- `dc72efe`: MCP and in-app assistant per-occurrence status with shared date validation.
+- `124198d`: repeated same-account window bootstrap preserves active editors and disk ownership.
+- `64a24af`: durable verification screenshots/excerpts and recovery design documentation.
+- Final combined evidence: **316 iOS tests passed**, **778 server tests passed**, final Catalyst
+  build succeeded, Ruff/mypy/lockfile clean, real UI + HTTP + SQLite recovery verified.
+- PR: https://github.com/legitimate-apps/command/pull/1 . Initial server and PII CI passed;
+  final documentation/state pushes can retrigger the same CI. Consult PR checks for latest run.
+- Main checkout untouched. All code is on `astra/capture-reliability-1002`; no merge, release,
+  server deployment, store submission, external messages, or new spend.
+
+### Cleanup
+- Both helpers finished; all their implementation commits are integrated. No unfinished helper work.
+- Own simulator shutdown confirmed and lease/device disposed; no booted simulators remain.
+- Own simulator companion stopped; all voice/helper and integrator DerivedData leases released.
+- Disposable verification servers stopped. No owned build/test/server/emulator remains running.
+- Worktrees retained for review. Raw local logs remain under `/tmp/command-astra-1002/` and
+  `/tmp/command-mcp-*`; committed evidence survives scratch cleanup in
+  `state/evidence/astra-1002/verification.md` and the helper state files.
+
+### Remaining and exact next step
+1. Review PR #1 and its final CI checks. It is ready for review; this run does not merge or deploy it.
+2. Next capture-reliability item: **durable voice recording/review recovery across process death**.
+   Start by reproducing process termination after recorder stop and during transcription; define
+   account-scoped ownership/retention of audio and transcript, then add crash/relaunch tests before
+   implementation. Current voice changes guard asynchronous races only; they do not claim this.
+3. Log/schedule drafts still lack equivalent durable recovery. Note edits retain the existing
+   last-write-wins behavior for genuinely simultaneous edits on different devices.
+4. Physical microphone/AVAudioSession behavior and rendered Mac/iPad multiwindow interaction remain
+   unverified. Multiwindow preservation has automated iOS coverage and Catalyst compilation.
+5. Existing historical completion activities are not migrated; new facts inherit current visibility.
+
+No unfinished source change is being handed off. No task has been started merely to spend usage.
