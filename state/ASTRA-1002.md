@@ -387,3 +387,18 @@ process remains. Changes are on the same review branch/PR; no merge or deploymen
   retain the flow on checkpoint failure; RecordingSheet has not been changed or activated.
 - Next: integrated builds/process regression checks, consume independent review, then shared
   account/microphone coordinator with explicit restore selection and real app verification.
+
+## Reset-window account retirement — 13:39 EDT
+- Added tests before the new account-retirement API, then implemented permanent store deactivation.
+  Logout retains files while hiding discovery and rejecting old writes/claims; account deletion
+  removes that directory, surfaces removal failure, and permits explicit cleanup retry. Only tokens
+  issued by this store are released, preserving a newer store's already-restored owner.
+- OBSERVED **50 native XCTest cases passed** (`voice-account-green.log`). Initial test compilation
+  failed on the absent API (`voice-account-red.log`). Covers late transcription/edit callbacks,
+  deletion without resurrection, failed deletion with writes still fenced, and newer-owner survival.
+- OBSERVED prior suspension commit also passed **8 process cases**, **1 real wire/SQLite case**, and
+  both iOS/Catalyst builds (`voice-suspend-{process,wire,ios-build,catalyst-build}.log`). Independent
+  read-only review found no concrete issues in terminal cleanup, wire discrimination or suspension.
+- App lifecycle callers have not been wired yet. Next: a shared note-capture coordinator must own
+  recorder finalization BEFORE store retirement; account deactivation alone cannot retain a live
+  recorder's temporary file. Continue with coordinator tests and explicit restore selection.

@@ -22,21 +22,43 @@ final class VoiceRecordingRecoveryStore {
         var savedNoteID: Int? = nil
         var savedText: String? = nil
     }
-    enum RecoveryError: Error { case invalidRecord }
+    enum RecoveryError: Error { case invalidRecord, inactiveAccount }
     let directory: URL
     private let files = FileManager.default
     private let removeItem: (URL) throws -> Void
     private static var owners: [URL: UUID] = [:]
+    private var claimedOwners: [URL: UUID] = [:]
+    private var active = true
+
+    private func requireActive() throws {
+        guard active else { throw RecoveryError.inactiveAccount }
+    }
+
+    /// The account coordinator shares this store across its flows. Retirement is permanent:
+    /// signing in again uses a fresh store. Failed deletion still retires callbacks and may be
+    /// retried explicitly; never silently claim private files were removed.
+    func deactivate(deleteRecordings: Bool) throws {
+        active = false
+        for (key, owner) in claimedOwners where Self.owners[key] == owner {
+            Self.owners.removeValue(forKey: key)
+        }
+        claimedOwners.removeAll()
+        if deleteRecordings, files.fileExists(atPath: directory.path) { try removeItem(directory) }
+    }
 
     func claim(_ id: UUID, owner: UUID) {
-        Self.owners[directory.appendingPathComponent(id.uuidString)] = owner
+        guard active else { return }
+        let key = directory.appendingPathComponent(id.uuidString)
+        Self.owners[key] = owner
+        claimedOwners[key] = owner
     }
     func isOwner(_ id: UUID, owner: UUID) -> Bool {
-        Self.owners[directory.appendingPathComponent(id.uuidString)] == owner
+        active && Self.owners[directory.appendingPathComponent(id.uuidString)] == owner
     }
     func release(_ id: UUID, owner: UUID) {
         let key = directory.appendingPathComponent(id.uuidString)
         if Self.owners[key] == owner { Self.owners.removeValue(forKey: key) }
+        if claimedOwners[key] == owner { claimedOwners.removeValue(forKey: key) }
     }
 
     init(root: URL, server: URL, accountID: Int, username: String, accountCreatedAt: String,
@@ -51,6 +73,7 @@ final class VoiceRecordingRecoveryStore {
     /// Publish metadata only after the copied audio exists. A crash during copy leaves the source
     /// untouched and an undiscoverable partial directory; no successful capture is claimed.
     func keep(_ source: URL, id: UUID) throws -> Recording {
+        try requireActive()
         let suffix = source.pathExtension.lowercased()
         guard ["m4a", "wav", "caf"].contains(suffix) else { throw RecoveryError.invalidRecord }
         let record = Recording(version: 1, id: id, filename: "recording.\(suffix)")
@@ -73,6 +96,7 @@ final class VoiceRecordingRecoveryStore {
     }
 
     func saveReview(id: UUID, transcript: String, engine: String) throws {
+        try requireActive()
         let manifest = directory.appendingPathComponent(id.uuidString).appendingPathComponent("manifest.json")
         var record = try JSONDecoder().decode(Recording.self, from: Data(contentsOf: manifest))
         guard record.id == id else { throw RecoveryError.invalidRecord }
@@ -87,6 +111,7 @@ final class VoiceRecordingRecoveryStore {
     /// A failed checkpoint must prevent the request: otherwise relaunch could manufacture a
     /// new key for a create whose outcome is unknown. The encoded attempt includes its payload.
     func saveCreateAttempt(id: UUID, attempt: CreateAttempt, transcript: String, engine: String) throws {
+        try requireActive()
         let manifest = directory.appendingPathComponent(id.uuidString).appendingPathComponent("manifest.json")
         var record = try JSONDecoder().decode(Recording.self, from: Data(contentsOf: manifest))
         guard record.id == id else { throw RecoveryError.invalidRecord }
@@ -101,6 +126,7 @@ final class VoiceRecordingRecoveryStore {
 
     func saveSubmission(id: UUID, submission: NoteSubmission, noteID: Int?, savedText: String?,
                         review: String, engine: String) throws {
+        try requireActive()
         let manifest = directory.appendingPathComponent(id.uuidString).appendingPathComponent("manifest.json")
         var record = try JSONDecoder().decode(Recording.self, from: Data(contentsOf: manifest))
         guard record.id == id else { throw RecoveryError.invalidRecord }
@@ -118,6 +144,7 @@ final class VoiceRecordingRecoveryStore {
     /// A damaged manifest must not hide intact siblings. Keep every unreadable file and make
     /// the warning explicit so recovery UI can report incomplete discovery.
     func load() throws -> (recordings: [Recording], unreadable: Bool) {
+        guard active else { return ([], false) }
         guard files.fileExists(atPath: directory.path) else { return ([], false) }
         let folders = try files.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
@@ -145,6 +172,7 @@ final class VoiceRecordingRecoveryStore {
     /// Listing entries are display snapshots. Restoration rereads the current manifest before
     /// claiming ownership so a stale picker cannot erase a newer submission or note identity.
     func recording(id: UUID) throws -> Recording {
+        try requireActive()
         let manifest = directory.appendingPathComponent(id.uuidString).appendingPathComponent("manifest.json")
         let record = try JSONDecoder().decode(Recording.self, from: Data(contentsOf: manifest))
         guard record.id == id else { throw RecoveryError.invalidRecord }
@@ -153,6 +181,7 @@ final class VoiceRecordingRecoveryStore {
     }
 
     func audioURL(for record: Recording) throws -> URL {
+        try requireActive()
         guard record.version == 1, ["recording.m4a", "recording.wav", "recording.caf"].contains(record.filename)
         else { throw RecoveryError.invalidRecord }
         let url = directory.appendingPathComponent(record.id.uuidString).appendingPathComponent(record.filename)
@@ -165,6 +194,7 @@ final class VoiceRecordingRecoveryStore {
     /// Returns whether cleanup finished; false still means the capture is durably terminal.
     @discardableResult
     func discard(_ id: UUID) throws -> Bool {
+        try requireActive()
         let folder = directory.appendingPathComponent(id.uuidString, isDirectory: true)
         let retired = directory.appendingPathComponent(".discarded-" + id.uuidString, isDirectory: true)
         if files.fileExists(atPath: folder.path) { try files.moveItem(at: folder, to: retired) }

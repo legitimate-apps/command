@@ -327,6 +327,63 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         XCTAssertEqual(try owner.recording(id: flow.captureID).transcript, "still writable")
         XCTAssertTrue(flow.suspendKeepingRecovery())
     }
+    func testDeactivatedAccountKeepsFilesButFencesOldCallbacks() async throws {
+        let owner = store(), flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source()); flow.transcript = "account one review"
+        let id = flow.captureID
+        let result = await flow.transcribe(immediateUse: true) { _ in
+            try owner.deactivate(deleteRecordings: false)
+            return ("late result", "sfspeech")
+        }
+        XCTAssertNil(result)
+        flow.transcript = "stale edits"; flow.cancel()
+        XCTAssertThrowsError(try owner.keep(source(), id: UUID()))
+        XCTAssertThrowsError(try owner.saveReview(id: id, transcript: "stale direct write", engine: "sfspeech"))
+        XCTAssertTrue(try owner.load().recordings.isEmpty)
+        let fresh = store()
+        XCTAssertEqual(try fresh.recording(id: id).transcript, "account one review")
+        XCTAssertTrue(try store(id: 2).load().recordings.isEmpty)
+    }
+    func testDeletedScopeCannotBeRecreatedByOldFlow() throws {
+        let owner = store(), flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source()); flow.transcript = "delete with account"
+        let id = flow.captureID
+        try owner.deactivate(deleteRecordings: true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: owner.directory.path))
+        flow.transcript = "late edit"; flow.cancel()
+        XCTAssertThrowsError(try owner.keep(source(), id: UUID()))
+        owner.claim(id, owner: UUID())
+        XCTAssertTrue(try store().load().recordings.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: owner.directory.path))
+    }
+    func testFailedAccountDeletionStillFencesOldWritesAndCanRetryCleanup() throws {
+        var blockDeletion = true
+        let owner = VoiceRecordingRecoveryStore(root: root.appendingPathComponent("recovery"),
+            server: URL(string: "https://example.com")!, accountID: 1, username: "tester",
+            accountCreatedAt: "first", removeItem: { url in
+                if blockDeletion { throw URLError(.cannotRemoveFile) }
+                try FileManager.default.removeItem(at: url)
+            })
+        let flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source()); flow.transcript = "old account"
+        XCTAssertThrowsError(try owner.deactivate(deleteRecordings: true))
+        flow.transcript = "late edit"
+        XCTAssertFalse(owner.isOwner(flow.captureID, owner: UUID()))
+        XCTAssertThrowsError(try owner.saveReview(id: flow.captureID, transcript: "late direct write", engine: "sfspeech"))
+        blockDeletion = false
+        XCTAssertNoThrow(try owner.deactivate(deleteRecordings: true))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: owner.directory.path))
+    }
+    func testRetiringSupersededStoreDoesNotRevokeFreshOwner() throws {
+        let old = store(), original = VoiceCaptureFlow(recovery: old)
+        original.adopt(try source()); original.transcript = "original"
+        let current = store()
+        let flow = VoiceCaptureFlow(recovery: current, restoring: try XCTUnwrap(current.load().recordings.first))
+        try old.deactivate(deleteRecordings: false)
+        flow.transcript = "current owner edit"
+        XCTAssertEqual(try current.recording(id: flow.captureID).transcript, "current owner edit")
+        XCTAssertTrue(flow.suspendKeepingRecovery())
+    }
     func testManifestCannotReferenceAnOutsideFile() throws {
         let owner = store()
         XCTAssertThrowsError(try owner.audioURL(for: .init(version: 1, id: UUID(), filename: "../../outside.m4a")))
