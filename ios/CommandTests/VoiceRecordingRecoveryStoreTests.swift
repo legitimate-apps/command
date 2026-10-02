@@ -280,6 +280,53 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: owner.directory.path).isEmpty,
                       "Known terminal leftovers should be cleaned on the next discovery")
     }
+    func testSuspensionRetainsReviewAndRejectsLateTranscription() async throws {
+        let owner = store(), flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source()); flow.transcript = "review before disappearance"
+        let result = await flow.transcribe(immediateUse: true) { _ in
+            XCTAssertTrue(flow.suspendKeepingRecovery())
+            return ("late transcript must not be sent", "sfspeech")
+        }
+        XCTAssertNil(result); XCTAssertTrue(flow.isCancelled)
+        flow.cancel() // a stale disappearance callback cannot discard the retained capture
+        flow.transcript = "stale view edit"
+        let restored = VoiceCaptureFlow(recovery: owner, restoring: try XCTUnwrap(owner.load().recordings.first))
+        XCTAssertEqual(restored.transcript, "review before disappearance")
+        XCTAssertNotNil(restored.audioURL)
+    }
+    func testSuspensionWhileCreatingRetainsOriginalRequestForReconciliation() async throws {
+        let owner = store(), flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source()); flow.transcript = "original"
+        var key = ""
+        let saved = await flow.saveRecoveredNote(locale: "en-US", using: .init(create: { request in
+            key = request.key; flow.transcript = "later edits"
+            XCTAssertTrue(flow.suspendKeepingRecovery())
+            return 42
+        }, update: { _, _ in XCTFail("Suspended flow must not send a PATCH") }))
+        XCTAssertFalse(saved)
+        let record = try XCTUnwrap(owner.load().recordings.first)
+        XCTAssertEqual(record.noteSubmission?.key, key); XCTAssertNil(record.savedNoteID)
+        XCTAssertEqual(record.transcript, "later edits")
+        let restored = VoiceCaptureFlow(recovery: owner, restoring: record)
+        let reconciled = await restored.saveRecoveredNote(locale: nil, using: .init(create: { request in
+            XCTAssertEqual(request.key, key); XCTAssertEqual(request.body, "original"); return 42
+        }, update: { id, body in XCTAssertEqual(id, 42); XCTAssertEqual(body, "later edits") }))
+        XCTAssertTrue(reconciled)
+    }
+    func testSuspensionRefusesToClaimUnsavedEditsAreDurable() throws {
+        let owner = store(), flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source()); flow.transcript = "keep me"
+        let manifest = owner.directory.appendingPathComponent(flow.captureID.uuidString).appendingPathComponent("manifest.json")
+        let original = try Data(contentsOf: manifest)
+        try Data("damaged".utf8).write(to: manifest)
+        XCTAssertFalse(flow.suspendKeepingRecovery())
+        XCTAssertFalse(flow.isCancelled); XCTAssertNotNil(flow.errorMessage)
+        XCTAssertNotNil(flow.audioURL)
+        try original.write(to: manifest)
+        flow.transcript = "still writable"
+        XCTAssertEqual(try owner.recording(id: flow.captureID).transcript, "still writable")
+        XCTAssertTrue(flow.suspendKeepingRecovery())
+    }
     func testManifestCannotReferenceAnOutsideFile() throws {
         let owner = store()
         XCTAssertThrowsError(try owner.audioURL(for: .init(version: 1, id: UUID(), filename: "../../outside.m4a")))

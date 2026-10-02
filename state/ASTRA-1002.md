@@ -375,3 +375,15 @@ process remains. Changes are on the same review branch/PR; no merge or deploymen
 - Next: implement explicit retain-on-disappearance/async suspension behavior in the flow before
   coordinator/UI integration. No app recovery UI is enabled yet; actual M4A crash behavior and
   durable assistant handoff remain unverified/unimplemented.
+
+## Reset-window explicit retention boundary — 13:34 EDT
+- Added test-first suspension contracts (initial compile correctly failed for the absent API), then
+  implemented suspendKeepingRecovery: checkpoint current review/request, release ownership, and
+  invalidate callbacks without deleting audio. Failed checkpoints retain a usable owner and error.
+- OBSERVED **46 native XCTest cases passed**. New cases cover late transcription after suspension,
+  stale cancellation/edit callbacks, suspension during create followed by original-request replay,
+  and checkpoint failure/recovery. Logs: `voice-suspend-{red,green}.log`.
+- This API still requires a coordinator to finalize active recorder audio before suspension and
+  retain the flow on checkpoint failure; RecordingSheet has not been changed or activated.
+- Next: integrated builds/process regression checks, consume independent review, then shared
+  account/microphone coordinator with explicit restore selection and real app verification.

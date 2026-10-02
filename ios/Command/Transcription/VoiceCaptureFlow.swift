@@ -259,6 +259,33 @@ final class VoiceCaptureFlow {
     /// The transcript was handed to the caller from review: the words are committed.
     func committedToCaller() { discardAudio() }
 
+    /// End this presentation's ownership without discarding its capture. The coordinator must
+    /// finalize/adopt active recorder audio first. Failure leaves this owner usable so the caller
+    /// can retain it and surface the checkpoint error instead of claiming recovery is safe.
+    @discardableResult
+    func suspendKeepingRecovery() -> Bool {
+        guard ownsRecording else { return false }
+        if audioURL != nil {
+            guard let recovery, let recoveredRecordingID else {
+                errorMessage = "This recording has no recovery copy yet. Keep Command open."
+                return false
+            }
+            do {
+                if noteSubmission != nil { try checkpointSubmission() }
+                else {
+                    try recovery.saveReview(id: recoveredRecordingID, transcript: transcript, engine: engineUsed)
+                }
+                recovery.release(recoveredRecordingID, owner: recordingOwner)
+            } catch {
+                errorMessage = "Couldn't keep your latest review edits. Keep Command open until they save."
+                return false
+            }
+        }
+        captureID = UUID()
+        isCancelled = true
+        return true
+    }
+
     /// The user cancelled (or the sheet went away): drop the recording and suppress any in-flight
     /// transcription's result.
     func cancel() {
