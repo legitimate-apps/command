@@ -19,7 +19,20 @@ import Observation
 final class VoiceCaptureFlow {
     /// The finished recording, kept until it's committed or discarded.
     private(set) var audioURL: URL?
-    var transcript = "" { didSet { if transcript != oldValue { noteCreate.reset() } } }
+    var transcript = "" {
+        didSet {
+            if transcript != oldValue {
+                reviewRevision = UUID()
+                noteCreate.reset()
+                if !applyingTranscription { persistReview() }
+            }
+        }
+    }
+    private var applyingTranscription = false
+    /// Changes whenever another capture replaces this one, even if it reuses a file URL.
+    private(set) var captureID = UUID()
+    private var reviewRevision = UUID()
+    private var transcriptionAttempt = UUID()
     private var noteCreate = CreateAttempt()
     private struct NotePayload: Encodable { let text: String; let engine: String }
     private(set) var engineUsed = ""
@@ -30,15 +43,45 @@ final class VoiceCaptureFlow {
     private(set) var isCancelled = false
 
     private let removeFile: (URL) -> Void
+    private let recovery: VoiceRecordingRecoveryStore?
+    private var recoveredRecordingID: UUID?
+    private let recordingOwner = UUID()
+    private var noteSubmission: VoiceRecordingRecoveryStore.NoteSubmission?
+    private var savedNoteID: Int?
+    private var savedText: String?
+    private var ownsRecording: Bool {
+        guard let recovery, let recoveredRecordingID else { return true }
+        return recovery.isOwner(recoveredRecordingID, owner: recordingOwner)
+    }
 
-    init(removeFile: @escaping (URL) -> Void = { try? FileManager.default.removeItem(at: $0) }) {
+    init(recovery: VoiceRecordingRecoveryStore? = nil,
+         restoring recording: VoiceRecordingRecoveryStore.Recording? = nil,
+         removeFile: @escaping (URL) -> Void = { try? FileManager.default.removeItem(at: $0) }) {
         self.removeFile = removeFile
+        self.recovery = recovery
+        if let recovery, let recording {
+            do {
+                let recording = try recovery.recording(id: recording.id)
+                audioURL = try recovery.audioURL(for: recording)
+                captureID = recording.id
+                recoveredRecordingID = recording.id
+                recovery.claim(recording.id, owner: recordingOwner)
+                transcript = recording.transcript ?? ""
+                engineUsed = recording.engine ?? ""
+                noteCreate = recording.createAttempt ?? CreateAttempt()
+                noteSubmission = recording.noteSubmission
+                savedNoteID = recording.savedNoteID
+                savedText = recording.savedText
+            } catch { errorMessage = "Couldn't reopen the saved recording. Its files have been kept." }
+        }
     }
 
     /// A new recording is starting: drop the previous one and any leftover review state.
     func reset() {
-        discardAudio()
+        guard discardAudio() else { return }
+        captureID = UUID()
         noteCreate.reset()
+        noteSubmission = nil; savedNoteID = nil; savedText = nil
         transcript = ""
         engineUsed = ""
         errorMessage = nil
@@ -46,11 +89,35 @@ final class VoiceCaptureFlow {
         isCancelled = false
     }
 
+    /// A permission prompt can outlive the sheet. Nil means the caller must not start recording
+    /// or change its UI because this capture was cancelled or replaced while the prompt was up.
+    func requestPermission(using request: () async -> Bool) async -> Bool? {
+        guard !isCancelled, !Task.isCancelled else { return nil }
+        let capture = captureID
+        let granted = await request()
+        guard !isCancelled, !Task.isCancelled, captureID == capture else { return nil }
+        return granted
+    }
+
     /// The recorder finished; keep its file for transcription (and any retry of it).
     func adopt(_ url: URL) {
-        if let old = audioURL, old != url { removeFile(old) }
-        if audioURL != url { noteCreate.reset() }
+        guard audioURL != url else { return }
+        guard discardAudio() else { return }
+        captureID = UUID()
+        noteCreate.reset()
+        noteSubmission = nil; savedNoteID = nil; savedText = nil
         audioURL = url
+        if let recovery {
+            do {
+                let record = try recovery.keep(url, id: captureID)
+                audioURL = try recovery.audioURL(for: record)
+                recoveredRecordingID = record.id
+                recovery.claim(record.id, owner: recordingOwner)
+                removeFile(url) // ownership transferred only after durable metadata publication
+            } catch {
+                errorMessage = "Couldn't keep a recovery copy of this recording. Keep Command open."
+            }
+        }
     }
 
     /// Transcribe the kept recording. Returns the cleaned transcript when `immediateUse` applies
@@ -59,36 +126,61 @@ final class VoiceCaptureFlow {
     /// while transcribing (the result is dropped; nothing is handed on).
     func transcribe(immediateUse: Bool,
                     using transcribe: (URL) async throws -> (text: String, engine: String)) async -> String? {
-        guard let url = audioURL, !isCancelled else { return nil }
+        guard let url = audioURL, !isCancelled, !Task.isCancelled, ownsRecording else { return nil }
+        let capture = captureID, revision = reviewRevision
+        let attempt = UUID()
+        transcriptionAttempt = attempt
         do {
             let result = try await transcribe(url)
-            guard !isCancelled else { return nil }
+            guard !isCancelled, !Task.isCancelled, ownsRecording, captureID == capture,
+                  reviewRevision == revision, transcriptionAttempt == attempt else { return nil }
+            applyingTranscription = true
             transcript = result.text
             engineUsed = result.engine
+            applyingTranscription = false
             errorMessage = nil
             transcriptionFailed = false
+            persistReview()
             if immediateUse, let cleaned = try? VoiceInputValidator.cleaned(result.text) {
                 discardAudio()
                 return cleaned
             }
         } catch {
-            guard !isCancelled else { return nil }
+            guard !isCancelled, !Task.isCancelled, ownsRecording, captureID == capture,
+                  reviewRevision == revision, transcriptionAttempt == attempt else { return nil }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             transcriptionFailed = true
         }
         return nil
     }
 
-    /// Save the reviewed transcript as a note via `save` (true on success). The recording is
-    /// released only once the note is committed; on failure it's kept and the error shown.
+    /// Save the reviewed transcript. Returns true only when the current review was committed and
+    /// may close. Completion of an older save must not discard newer edits or another recording.
+    /// A failed current save keeps the recording and shows the error for retry.
     func saveNote(using save: (_ text: String, _ engine: String, _ key: String) async -> String?) async -> Bool {
-        guard !saving else { return false }
+        guard !saving, !isCancelled, !Task.isCancelled, ownsRecording else { return false }
+        if noteSubmission != nil {
+            errorMessage = "Finish this recording's pending save before starting another submission."
+            return false
+        }
+        if recovery != nil && recoveredRecordingID == nil {
+            errorMessage = "This recording has no recovery copy yet. Keep Command open; it has not been sent."
+            return false
+        }
+        let capture = captureID, revision = reviewRevision
+        let text = transcript
         saving = true
         defer { saving = false }
         do {
             let engine = engineUsed.isEmpty ? "sfspeech" : engineUsed
-            let key = try noteCreate.key(for: NotePayload(text: transcript, engine: engine))
-            if let failure = await save(transcript, engine, key) {
+            let key = try noteCreate.key(for: NotePayload(text: text, engine: engine))
+            if let recovery, let recoveredRecordingID {
+                try recovery.saveCreateAttempt(id: recoveredRecordingID, attempt: noteCreate, transcript: text, engine: engine)
+            }
+            let failure = await save(text, engine, key)
+            guard !isCancelled, !Task.isCancelled, ownsRecording, captureID == capture,
+                  reviewRevision == revision else { return false }
+            if let failure {
                 errorMessage = failure
                 return false
             }
@@ -102,18 +194,135 @@ final class VoiceCaptureFlow {
         }
     }
 
+    struct NoteOperations {
+        var create: (VoiceRecordingRecoveryStore.NoteSubmission) async throws -> Int
+        var update: (Int, String) async throws -> Void
+    }
+
+    /// Durable note path: replay the original create, checkpoint its identity, then PATCH later
+    /// edits to that same note. A lost PATCH response is safe to repeat. The caller's operations
+    /// must use the capture's account/session and the exact request fields supplied here.
+    func saveRecoveredNote(locale: String?, using operations: NoteOperations) async -> Bool {
+        guard !saving, !isCancelled, !Task.isCancelled, ownsRecording,
+              recovery != nil, recoveredRecordingID != nil else { return false }
+        let capture = captureID
+        saving = true
+        defer { saving = false }
+        do {
+            if noteSubmission == nil {
+                guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    errorMessage = "Add some text before saving this recording."
+                    return false
+                }
+                let engine = engineUsed.isEmpty ? "sfspeech" : engineUsed
+                let key = try noteCreate.key(for: NotePayload(text: transcript, engine: engine))
+                noteSubmission = .init(body: transcript, engine: engine, locale: locale, key: key)
+            }
+            // Always write before transport, including retry after a previous checkpoint failed.
+            try checkpointSubmission()
+            guard let submission = noteSubmission else { return false }
+            if savedNoteID == nil {
+                let id = try await operations.create(submission)
+                guard !isCancelled, !Task.isCancelled, ownsRecording, captureID == capture else { return false }
+                savedNoteID = id
+                savedText = submission.body
+                try checkpointSubmission()
+            }
+            guard let id = savedNoteID else { return false }
+            let sent = transcript
+            if savedText != sent {
+                try await operations.update(id, sent)
+                guard !isCancelled, !Task.isCancelled, ownsRecording, captureID == capture else { return false }
+                savedText = sent
+                try checkpointSubmission()
+            }
+            // New edits during PATCH remain recoverable and keep the review open for another pass.
+            guard transcript == savedText else { return false }
+            errorMessage = nil
+            return discardAudio()
+        } catch {
+            guard !isCancelled, ownsRecording, captureID == capture else { return false }
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func checkpointSubmission() throws {
+        guard ownsRecording, let recovery, let recoveredRecordingID, let noteSubmission else {
+            throw VoiceRecordingRecoveryStore.RecoveryError.invalidRecord
+        }
+        try recovery.saveSubmission(id: recoveredRecordingID, submission: noteSubmission,
+                                    noteID: savedNoteID, savedText: savedText,
+                                    review: transcript, engine: engineUsed)
+    }
+
     /// The transcript was handed to the caller from review: the words are committed.
     func committedToCaller() { discardAudio() }
+
+    /// End this presentation's ownership without discarding its capture. The coordinator must
+    /// finalize/adopt active recorder audio first. Failure leaves this owner usable so the caller
+    /// can retain it and surface the checkpoint error instead of claiming recovery is safe.
+    @discardableResult
+    func suspendKeepingRecovery() -> Bool {
+        guard ownsRecording else { return false }
+        if audioURL != nil {
+            guard let recovery, let recoveredRecordingID else {
+                errorMessage = "This recording has no recovery copy yet. Keep Command open."
+                return false
+            }
+            do {
+                if noteSubmission != nil { try checkpointSubmission() }
+                else {
+                    try recovery.saveReview(id: recoveredRecordingID, transcript: transcript, engine: engineUsed)
+                }
+                recovery.release(recoveredRecordingID, owner: recordingOwner)
+            } catch {
+                errorMessage = "Couldn't keep your latest review edits. Keep Command open until they save."
+                return false
+            }
+        }
+        captureID = UUID()
+        isCancelled = true
+        return true
+    }
 
     /// The user cancelled (or the sheet went away): drop the recording and suppress any in-flight
     /// transcription's result.
     func cancel() {
+        captureID = UUID()
         isCancelled = true
         discardAudio()
     }
 
-    private func discardAudio() {
+    private func persistReview() {
+        guard ownsRecording else { return }
+        guard let recovery else { return }
+        guard let recoveredRecordingID else {
+            if audioURL != nil { errorMessage = "Couldn't keep a recovery copy of this recording. Keep Command open." }
+            return
+        }
+        do { try recovery.saveReview(id: recoveredRecordingID, transcript: transcript, engine: engineUsed) }
+        catch { errorMessage = "Couldn't keep your latest review edits. Keep Command open until they save." }
+    }
+
+    @discardableResult
+    private func discardAudio() -> Bool {
+        guard ownsRecording else { return false }
+        if let recoveredRecordingID, let recovery {
+            do {
+                if try !recovery.discard(recoveredRecordingID) {
+                    errorMessage = "This recording is finished. Its private audio cleanup will be retried."
+                }
+                recovery.release(recoveredRecordingID, owner: recordingOwner)
+            }
+            catch {
+                errorMessage = "Couldn't remove the saved recording. Its cleanup can be retried."
+                return false
+            }
+        }
         if let url = audioURL { removeFile(url) }
         audioURL = nil
+        recoveredRecordingID = nil
+        return true
     }
 }

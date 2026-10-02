@@ -424,6 +424,14 @@ def log_completion(
         ).fetchone()
     if existing is not None:
         return get(conn, account_id, int(existing["id"]))
+    # A generated completion copies private assignment content, so inherit its veil.
+    # Keep this at the shared completion boundary for whole-series and per-day writes.
+    parent = conn.execute(
+        "SELECT hidden FROM assignments WHERE id = ? AND account_id = ?",
+        (assignment_id, account_id),
+    ).fetchone()
+    if parent is None:
+        raise NotFound(f"No assignment with id {assignment_id}.")
     return create(
         conn,
         account_id,
@@ -433,4 +441,5 @@ def log_completion(
         assignment_id=assignment_id,
         occurrence_date=occurrence_date,
         source="assignment_completion",
+        hidden=bool(parent["hidden"]),
     )

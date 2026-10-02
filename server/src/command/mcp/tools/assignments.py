@@ -236,6 +236,9 @@ def register(mcp: FastMCP, settings: Settings) -> None:
         name="assignments_set_status",
         description=(
             "Set an assignment's status (todo|scheduled|in_progress|done|blocked|cancelled|skipped). "
+            "For one occurrence, pass occurrence_date (YYYY-MM-DD) from assignments_calendar; "
+            "use its original key even when rescheduled, never the date of occurs_at. "
+            "Omit occurrence_date only to change the entire assignment/recurring series. "
             "Setting 'done' auto-logs a completion activity (deduped); 'skipped' marks it not-done."
         ),
         annotations=ToolAnnotations(
@@ -247,13 +250,21 @@ def register(mcp: FastMCP, settings: Settings) -> None:
         ),
     )
     async def assignments_set_status(
-        assignment_id: int, status: str, include_hidden: bool = False
+        assignment_id: int, status: str, include_hidden: bool = False,
+        occurrence_date: str | None = None,
     ) -> dict[str, Any]:
         def work(conn: sqlite3.Connection, account_id: int) -> dict[str, Any]:
             permissions.require(conn, account_id, "assignments", "update")
             assignments_core.get_for_agent(
                 conn, account_id, assignment_id, include_hidden=include_hidden
             )
+            if occurrence_date is not None:
+                assignments_core.set_occurrence_status(
+                    conn, account_id, assignment_id, occurrence_date, status
+                )
+                return {
+                    "assignment_id": assignment_id, "occurrence_date": occurrence_date, "status": status,
+                }
             return assignments_core.set_status(conn, account_id, assignment_id, status).model_dump()
 
         return await run_for_account(settings.db_path, work)

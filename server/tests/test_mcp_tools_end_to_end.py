@@ -426,3 +426,86 @@ async def test_notes_create_replay_requires_read_permission_and_visibility(
         }
     assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM audit_log WHERE tool = 'notes_create'").fetchone()[0] == 1
+
+
+@pytest.mark.anyio
+async def test_occurrence_completion_changes_one_day_and_deduplicates_activity(live) -> None:
+    mcp, conn, account_id = live
+    a = assignments_core.create(
+        conn, account_id, title="Daily walk", schedule_kind="routine", rrule="FREQ=DAILY",
+        scheduled_start="2026-10-01T09:00:00-04:00", timezone="America/New_York",
+    )
+    # Move Oct 2 across midnight: the original calendar key still identifies the occurrence.
+    assignments_core.reschedule_occurrence(conn, account_id, a.id, "2026-10-02", "2026-10-03T12:00:00Z")
+    conn.commit()
+    for _ in range(2):
+        result = await _call(
+            mcp, "assignments_set_status", assignment_id=a.id, status="done", occurrence_date="2026-10-02",
+        )
+        assert result == {"assignment_id": a.id, "occurrence_date": "2026-10-02", "status": "done"}
+    assert assignments_core.get(conn, account_id, a.id).status == "todo"
+    calendar = await _call(
+        mcp, "assignments_calendar", start="2026-10-01T00:00:00Z", end="2026-10-04T00:00:00Z",
+    )
+    assert [(o["occurrence_date"], o["status"]) for o in calendar["occurrences"]] == [
+        ("2026-10-01", "todo"), ("2026-10-02", "done"), ("2026-10-03", "todo"),
+    ]
+    facts = conn.execute("SELECT occurrence_date FROM activities WHERE assignment_id = ?", (a.id,)).fetchall()
+    assert [row[0] for row in facts] == ["2026-10-02"]
+    # A skip is a plan decision, not a completion fact; undoing a status doesn't erase history.
+    await _call(mcp, "assignments_set_status", assignment_id=a.id,
+                status="skipped", occurrence_date="2026-10-03")
+    await _call(mcp, "assignments_set_status", assignment_id=a.id,
+                status="todo", occurrence_date="2026-10-02")
+    await _call(mcp, "assignments_set_status", assignment_id=a.id,
+                status="done", occurrence_date="2026-10-02")
+    assert conn.execute("SELECT COUNT(*) FROM activities WHERE assignment_id = ?", (a.id,)).fetchone()[0] == 1
+
+
+@pytest.mark.anyio
+async def test_occurrence_completion_enforces_permissions_visibility_and_ownership(live) -> None:
+    from command.core import settings as settings_core
+
+    mcp, conn, account_id = live
+    a = assignments_core.create(
+        conn, account_id, title="Private daily walk", schedule_kind="routine", rrule="FREQ=DAILY",
+        scheduled_start="2026-10-01T09:00:00Z",
+    )
+    assignments_core.update(conn, account_id, a.id, hidden=True)
+    other = accounts_core.register(conn, "other-owner", "password1")
+    foreign = assignments_core.create(
+        conn, other.id, title="Other task", scheduled_start="2026-10-01T09:00:00Z",
+    )
+    conn.commit()
+    for target, include_hidden in ((a.id, False), (foreign.id, True)):
+        with pytest.raises(ToolError, match="No assignment with id"):
+            await _call(mcp, "assignments_set_status", assignment_id=target, status="done",
+                        occurrence_date="2026-10-01", include_hidden=include_hidden)
+    settings_core.set_value(conn, account_id, "mcp_permissions", {"assignments": {"update": False}})
+    conn.commit()
+    with pytest.raises(ToolError, match="disabled"):
+        await _call(mcp, "assignments_set_status", assignment_id=a.id, status="done",
+                    occurrence_date="2026-10-01", include_hidden=True)
+    assert conn.execute("SELECT COUNT(*) FROM occurrence_status").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 0
+    settings_core.set_value(conn, account_id, "mcp_permissions", {"assignments": {"update": True}})
+    conn.commit()
+    await _call(mcp, "assignments_set_status", assignment_id=a.id, status="done",
+                occurrence_date="2026-10-01", include_hidden=True)
+    assert conn.execute("SELECT hidden FROM activities WHERE assignment_id = ?", (a.id,)).fetchone()[0] == 1
+
+
+@pytest.mark.anyio
+async def test_occurrence_completion_rejects_invalid_key_and_preserves_series_mode(live) -> None:
+    mcp, conn, account_id = live
+    a = assignments_core.create(
+        conn, account_id, title="Weekly walk", schedule_kind="routine", rrule="FREQ=WEEKLY;BYDAY=MO",
+        scheduled_start="2026-10-05T09:00:00Z",
+    )
+    conn.commit()
+    with pytest.raises(ToolError, match="No occurrence"):
+        await _call(mcp, "assignments_set_status", assignment_id=a.id,
+                    status="done", occurrence_date="2026-10-06")
+    assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 0
+    result = await _call(mcp, "assignments_set_status", assignment_id=a.id, status="cancelled")
+    assert result["id"] == a.id and result["status"] == "cancelled"

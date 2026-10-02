@@ -213,6 +213,8 @@ struct RecordingSheet: View {
     }
 
     private func begin() async {
+        // A queued Record again task must not revive a sheet that has already been cancelled.
+        guard !flow.isCancelled, !Task.isCancelled else { return }
         flow.reset()
         if requiresPreparedPermission {
             switch VoiceLaunchPolicy.decision(for: permissionState) {
@@ -225,16 +227,19 @@ struct RecordingSheet: View {
             }
             return
         }
-        guard await recorder.requestPermission() else { phase = .denied; return }
+        guard let granted = await flow.requestPermission(using: { await recorder.requestPermission() }) else { return }
+        guard granted else { phase = .denied; return }
         await startRecording()
     }
 
     private func requestPreparedPermission() async {
-        guard await recorder.requestPermission() else { phase = .denied; return }
+        guard let granted = await flow.requestPermission(using: { await recorder.requestPermission() }) else { return }
+        guard granted else { phase = .denied; return }
         await startRecording()
     }
 
     private func startRecording() async {
+        guard !flow.isCancelled, !Task.isCancelled else { return }
         do {
             flow.reset()
             try recorder.start()
@@ -255,6 +260,8 @@ struct RecordingSheet: View {
     }
 
     private func stopAndTranscribe() async {
+        // Stop and the interruption observer can both enqueue this before either task runs.
+        guard phase == .recording, !flow.isCancelled else { return }
         guard let url = recorder.stop() else { dismiss(); return }
         flow.adopt(url)
         await transcribeKeptRecording()
@@ -263,13 +270,15 @@ struct RecordingSheet: View {
     /// Transcribe the kept recording. The file is NOT deleted here — only once its words are
     /// committed (saved / used) or the user cancels — so a failure can be retried.
     private func transcribeKeptRecording() async {
+        guard phase != .transcribing, !flow.isCancelled else { return }
         phase = .transcribing
+        let capture = flow.captureID
         let transcription = app.transcription
         let used = await flow.transcribe(immediateUse: useImmediatelyAfterTranscription && onUse != nil) { url in
             try await transcription.transcribe(fileURL: url, locale: Locale.current.identifier)
         }
         // Cancelled mid-transcription: the sheet is already closing; hand nothing on.
-        guard !flow.isCancelled else { return }
+        guard !flow.isCancelled, !Task.isCancelled, flow.captureID == capture else { return }
         if let used, let onUse {
             onUse(used)
             dismiss()

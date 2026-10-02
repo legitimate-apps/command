@@ -57,7 +57,7 @@ struct NoteDetailView: View {
     init(note: Note? = nil, inDetailColumn: Bool = false, session: NoteSaver? = nil) {
         self.initialNote = note
         self.inDetailColumn = inDetailColumn
-        _saver = State(initialValue: session ?? NoteSaver(noteId: note?.id, text: Self.combined(note)))
+        _saver = State(initialValue: session ?? NoteSaver(noteId: note?.id, text: Self.combined(note), hidden: note?.hidden ?? false))
     }
 
     /// Reconstruct the single-field text from a note losslessly. Body holds the full content; a
@@ -70,8 +70,10 @@ struct NoteDetailView: View {
         return note.body.isEmpty ? title : title + "\n" + note.body
     }
 
-    private var client: APIClient { app.client }
-    private var store: NotesStore { app.notes }
+    @State private var editorClient: APIClient?
+    private var client: APIClient { editorClient ?? app.client }
+    @State private var editorStore: NotesStore?
+    private var store: NotesStore { editorStore ?? app.notes }
     private var noteId: Int? { saver.noteId }
     private var text: String { saver.text }
     private var isNew: Bool { noteId == nil }
@@ -97,7 +99,7 @@ struct NoteDetailView: View {
     /// A hidden note opens censored: shown but covered, so it never reveals plaintext on
     /// tap. In "Rub to reveal" the reader can rub it to peek; "Reveal all" lifts the cover
     /// and restores normal editing.
-    private var isHidden: Bool { !revealedOverride && (initialNote?.hidden ?? false) && app.hiddenRevealMode != .revealAll }
+    private var isHidden: Bool { !revealedOverride && saver.hidden && app.hiddenRevealMode != .revealAll }
 
     var body: some View {
         NavigationStack {
@@ -183,8 +185,7 @@ struct NoteDetailView: View {
                 if phase != .active { saveTask?.cancel(); Task { _ = await saver.flush(using: saveOps) } }
             }
             // A sheet can't be swiped away while its last save failed — the Retry / Discard banner
-            // is the way out. Parked edits live only in memory, so a swipe followed by the app
-            // being killed would lose the text.
+            // is the way out. Local recovery also survives an unexpected process termination.
             .interactiveDismissDisabled(saver.isFailed)
             .confirmationDialog("Discard unsaved changes?", isPresented: $showDiscard, titleVisibility: .visible) {
                 Button("Discard", role: .destructive) { discardAndClose() }
@@ -195,6 +196,8 @@ struct NoteDetailView: View {
             .onAppear {
                 lifetime.appear()
                 guard !registeredEditor else { return }
+                editorStore = app.notes
+                editorClient = app.client
                 saver = store.resumeEditor(saver: saver, owner: lifetime.owner)
                 registeredEditor = true
             }
@@ -279,7 +282,7 @@ struct NoteDetailView: View {
     /// never exposes plaintext. The reader rubs to peek (in "Rub to reveal" mode).
     private var hiddenReader: some View {
         ScrollView {
-            Text(Self.combined(initialNote).isEmpty ? "Hidden note" : Self.combined(initialNote))
+            Text(text.isEmpty ? "Hidden note" : text)
                 .font(Typeface.body(17))
                 .foregroundStyle(Palette.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -384,7 +387,7 @@ struct NoteDetailView: View {
             guard let id = noteId else { return }
             focused = false
             Task {
-                await app.notes.setHidden(id: id, hidden: true, client: client)
+                await store.setHidden(id: id, hidden: true, client: client)
                 finish()
             }
         } label: { Label("Hide", systemImage: "eye.slash") }
@@ -396,7 +399,7 @@ struct NoteDetailView: View {
             guard let id = noteId else { return }
             Task {
                 if await app.privacy.authenticate(reason: "Reveal this note"),
-                   await app.notes.setHidden(id: id, hidden: false, client: client) {
+                   await store.setHidden(id: id, hidden: false, client: client) {
                     revealedOverride = true
                 }
             }

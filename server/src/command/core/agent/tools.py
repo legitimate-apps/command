@@ -208,12 +208,24 @@ def update_assignment(
 
 
 @_guard
-def set_assignment_status(ctx: RunContext[AgentDeps], assignment_id: int, status: str) -> str:
-    """Set an assignment's status (todo|scheduled|in_progress|done|blocked|cancelled)."""
+def set_assignment_status(
+    ctx: RunContext[AgentDeps], assignment_id: int, status: str, occurrence_date: str | None = None,
+) -> str:
+    """Set status (todo|scheduled|in_progress|done|blocked|cancelled|skipped). For one recurring
+    occurrence, pass occurrence_date (YYYY-MM-DD) from get_calendar: the ORIGINAL key, even
+    after rescheduling, not the date of occurs_at. Omitting it changes the entire assignment
+    or recurring series. 'done' logs a deduplicated completion; 'skipped' logs no activity."""
     with _conn(ctx) as conn:
         assignments_core.get_for_agent(
             conn, ctx.deps.account_id, assignment_id, include_hidden=ctx.deps.allow_hidden
         )
+        if occurrence_date is not None:
+            assignments_core.set_occurrence_status(
+                conn, ctx.deps.account_id, assignment_id, occurrence_date, status
+            )
+            return json.dumps({
+                "assignment_id": assignment_id, "occurrence_date": occurrence_date, "status": status,
+            })
         return _dump(assignments_core.set_status(conn, ctx.deps.account_id, assignment_id, status))
 
 

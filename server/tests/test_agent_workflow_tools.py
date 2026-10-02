@@ -191,3 +191,16 @@ def test_read_attachment_truncates_long_text(wired) -> None:
     conn.commit()
     out = json.loads(T.read_attachment(ctx, att.id, max_chars=100))
     assert out["truncated"] is True and len(out["content"]) == 100
+
+
+def test_complete_one_occurrence_without_finishing_the_routine(wired) -> None:
+    ctx, conn, aid = wired
+    a = A.create(conn, aid, title="Daily walk", schedule_kind="routine", rrule="FREQ=DAILY",
+                 scheduled_start="2026-10-01T09:00:00Z")
+    conn.commit()
+    result = json.loads(T.set_assignment_status(ctx, a.id, "done", occurrence_date="2026-10-02"))
+    assert result == {"assignment_id": a.id, "occurrence_date": "2026-10-02", "status": "done"}
+    assert A.get(conn, aid, a.id).status == "todo"
+    cal = A.calendar(conn, aid, "2026-10-01T00:00:00Z", "2026-10-04T00:00:00Z")
+    assert [o.status for o in cal] == ["todo", "done", "todo"]
+    assert json.loads(T.set_assignment_status(ctx, a.id, "cancelled"))["status"] == "cancelled"

@@ -240,6 +240,19 @@ get logged:
    (assignment, occurrence), so re-completing never double-logs. Don't *also*
    `activities_log` a completion — it's already recorded.
 
+For "I did today's walk", call `assignments_calendar` and pass that occurrence's
+`occurrence_date` to `assignments_set_status` along with `assignment_id` and
+`status: "done"`. This changes only that occurrence; tomorrow's walk stays pending.
+The date is the **original schedule key** (`YYYY-MM-DD`), even when a reschedule
+moves the occurrence onto another day. Copy `occurrence_date`, never derive it
+from `occurs_at`. Invalid or nonexistent schedule dates are rejected without
+recording a completion. Use `status: "skipped"` for a single missed occurrence.
+Omitting `occurrence_date` retains whole-assignment/whole-series behavior, so do
+that only when the operator means the entire series. Per-occurrence calls return
+`assignment_id`, `occurrence_date` and the applied `status`; whole-series calls
+return the assignment. Reopening an occurrence changes the plan but preserves
+the existing completion fact; completing it again does not duplicate that fact.
+
 So the log is *complete*: planned-and-done **and** out-of-the-blue both land in it.
 "Didn't do it" is the **absence** of an activity — record it on the plan with the
 `skipped` status, not as an activity.

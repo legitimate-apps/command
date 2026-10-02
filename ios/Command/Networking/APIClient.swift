@@ -32,13 +32,50 @@ final class APIClient {
     let baseURL: URL
     private let session: URLSession
     private let cookieStorage: HTTPCookieStorage?
+    // All clients share the app's cookie jar. Serialize snapshot/check/store so a response
+    // from an old login cannot restore its cookie over a newer account's session.
+    private static let cookieLock = NSLock()
+    private var sessionGeneration = UUID()
+
+    struct SessionIdentity: Equatable, Sendable {
+        fileprivate let generation: UUID
+        fileprivate let cookieHeader: String?
+    }
+
+    private func identityLocked() -> SessionIdentity {
+        let cookies = (cookieStorage?.cookies(for: baseURL) ?? []).sorted { $0.name < $1.name }
+        return SessionIdentity(generation: sessionGeneration,
+                               cookieHeader: cookies.isEmpty ? nil : HTTPCookie.requestHeaderFields(with: cookies)["Cookie"])
+    }
+
+    private func sessionIdentity() -> SessionIdentity {
+        Self.cookieLock.withLock { identityLocked() }
+    }
+
+    func isCurrentSession(_ identity: SessionIdentity) -> Bool {
+        Self.cookieLock.withLock { identityLocked() == identity }
+    }
+
+    private func authorize(_ request: inout URLRequest, identity: SessionIdentity) throws {
+        guard isCurrentSession(identity) else { throw URLError(.cancelled) }
+        request.httpShouldHandleCookies = false
+        request.setValue(identity.cookieHeader, forHTTPHeaderField: "Cookie")
+    }
+
+    private func accept(_ response: HTTPURLResponse, url: URL, identity: SessionIdentity) throws -> SessionIdentity {
+        try Self.cookieLock.withLock {
+            guard identityLocked() == identity else { throw URLError(.cancelled) }
+            storeCookies(from: response, for: url)
+            return identityLocked()
+        }
+    }
 
     /// Fired (off the main actor) when the server rejects our session with 401 on an
     /// *authenticated* request — the session cookie expired or was revoked mid-use.
     /// NOT fired for login/register/invite credential checks, whose 401 is an auth error
     /// the auth screen surfaces locally. AppState installs this to drop cleanly back
     /// to the sign-in screen instead of leaving every action failing with a generic error.
-    var onUnauthorized: (@Sendable () -> Void)?
+    var onUnauthorized: (@Sendable (SessionIdentity) -> Void)?
 
     /// Decide whether a failed response means "this session is dead" — the one signal that
     /// throws the operator back to the sign-in screen.
@@ -57,9 +94,10 @@ final class APIClient {
             && !path.hasSuffix("/auth/invite")
     }
 
-    private func flagUnauthorized(status: Int, code: String?, url: URL?) {
+    private func flagUnauthorized(status: Int, code: String?, url: URL?, identity: SessionIdentity) {
         guard Self.isSessionExpiry(status: status, code: code, path: url?.path ?? "") else { return }
-        onUnauthorized?()
+        guard isCurrentSession(identity) else { return }
+        onUnauthorized?(identity)
     }
 
     /// Drain every page of a cursor-paginated list into one array. The list endpoints are cursor-
@@ -98,7 +136,7 @@ final class APIClient {
 
     init(baseURL: URL, configuration: URLSessionConfiguration = .default) {
         self.baseURL = baseURL
-        configuration.httpShouldSetCookies = true
+        configuration.httpShouldSetCookies = false
         configuration.httpCookieAcceptPolicy = .always
         self.cookieStorage = configuration.httpCookieStorage
         self.session = URLSession(configuration: configuration)
@@ -657,7 +695,8 @@ final class APIClient {
     /// request. `threadId == nil` starts a new thread (the first `thread` event
     /// reports its id).
     func streamAgentChat(message: String, threadId: Int?, model: String? = nil, allowHidden: Bool = false, images: [ChatImage] = []) -> AsyncThrowingStream<AgentEvent, Error> {
-        AsyncThrowingStream { continuation in
+        let identity = sessionIdentity()
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     var req = URLRequest(url: makeURL("/api/agent/chat", query: []))
@@ -670,10 +709,10 @@ final class APIClient {
                     // every ~15s during a run; this allows for a few missed ones on a bad link.
                     req.timeoutInterval = 180
                     req.httpBody = try Self.encoder.encode(AgentChatBody(message: message, threadId: threadId, model: model, allowHidden: allowHidden, images: images))
-                    attachCookies(to: &req)
+                    try authorize(&req, identity: identity)
                     let (bytes, response) = try await session.bytes(for: req)
                     guard let http = response as? HTTPURLResponse else { throw APIError.notHTTP }
-                    storeCookies(from: http, for: req.url!)
+                    let acceptedIdentity = try accept(http, url: req.url!, identity: identity)
                     guard (200..<300).contains(http.statusCode) else {
                         // Drain the (small) error envelope rather than discarding it: the code is
                         // what distinguishes a dead session from an edge 401, and the message is
@@ -681,11 +720,12 @@ final class APIClient {
                         let parsed = try? Self.decoder.decode(
                             ServerError.self, from: await Self.errorBody(from: bytes)
                         )
-                        flagUnauthorized(status: http.statusCode, code: parsed?.error.code, url: req.url)
+                        flagUnauthorized(status: http.statusCode, code: parsed?.error.code, url: req.url, identity: acceptedIdentity)
                         throw APIError.http(status: http.statusCode,
                                             code: parsed?.error.code, message: parsed?.error.message)
                     }
                     for try await line in bytes.lines {
+                        guard isCurrentSession(acceptedIdentity) else { throw URLError(.cancelled) }
                         guard line.hasPrefix("data:") else { continue }   // SSE: ignore comments/blank lines
                         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                         guard !payload.isEmpty, let data = payload.data(using: .utf8),
@@ -867,9 +907,10 @@ final class APIClient {
         if let idempotencyKey { req.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key") }
         // Only keyed creates are replayable. HTTP errors and permanent URL errors go straight
         // to the caller; a transient transport failure gets at most two bounded retries.
+        let identity = sessionIdentity()
         var retries = 0
         while true {
-            do { return try await send(req) }
+            do { return try await send(req, identity: identity) }
             catch {
                 guard idempotencyKey != nil, retries < 2,
                       let transport = error as? URLError, Self.isTransient(transport) else { throw error }
@@ -903,15 +944,16 @@ final class APIClient {
         return try await send(req)
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
+    private func send(_ request: URLRequest, identity: SessionIdentity? = nil) async throws -> Data {
+        let identity = identity ?? sessionIdentity()
         var request = request
-        attachCookies(to: &request)
+        try authorize(&request, identity: identity)
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw APIError.notHTTP }
-        storeCookies(from: http, for: request.url!)
+        let acceptedIdentity = try accept(http, url: request.url!, identity: identity)
         guard (200..<300).contains(http.statusCode) else {
             let parsed = try? Self.decoder.decode(ServerError.self, from: data)
-            flagUnauthorized(status: http.statusCode, code: parsed?.error.code, url: request.url)
+            flagUnauthorized(status: http.statusCode, code: parsed?.error.code, url: request.url, identity: acceptedIdentity)
             throw APIError.http(status: http.statusCode, code: parsed?.error.code, message: parsed?.error.message)
         }
         return data
@@ -949,8 +991,11 @@ final class APIClient {
     }
 
     func clearSessionCookies() {
-        guard let storage = cookieStorage, let cookies = storage.cookies(for: baseURL) else { return }
-        for cookie in cookies { storage.deleteCookie(cookie) }
+        Self.cookieLock.withLock {
+            sessionGeneration = UUID()
+            guard let storage = cookieStorage, let cookies = storage.cookies(for: baseURL) else { return }
+            for cookie in cookies { storage.deleteCookie(cookie) }
+        }
     }
 
     private func storeCookies(from http: HTTPURLResponse, for url: URL) {
@@ -960,10 +1005,7 @@ final class APIClient {
         storage.setCookies(cookies, for: url, mainDocumentURL: url)
     }
 
-    private func attachCookies(to request: inout URLRequest) {
-        guard let storage = cookieStorage, let url = request.url, let cookies = storage.cookies(for: url), !cookies.isEmpty else { return }
-        for (key, value) in HTTPCookie.requestHeaderFields(with: cookies) { request.setValue(value, forHTTPHeaderField: key) }
-    }
+
 }
 
 /// Assignment create body — its own type because callers build it field-by-field.

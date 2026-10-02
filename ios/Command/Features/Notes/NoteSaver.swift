@@ -23,7 +23,7 @@ import Observation
 @Observable
 final class NoteSaver: Identifiable {
     /// Identity of this editing session, retained across presentations and create retries.
-    let id = UUID()
+    let id: UUID
     enum State: Equatable { case idle, saving, saved, failed(String) }
 
     /// The two server operations a save needs, supplied per call (the view builds them from its
@@ -37,7 +37,8 @@ final class NoteSaver: Identifiable {
 
     /// The editor's current text. The view writes every keystroke here; a save always sends the
     /// latest value when an update STARTS; an uncertain create first replays its original payload.
-    var text: String
+    var text: String { didSet { recoveryDidChange?() } }
+    private(set) var hidden: Bool
     private(set) var noteId: Int?
     private(set) var state: State = .idle
     /// Trimmed text of the last successful save (or of the note as loaded).
@@ -46,9 +47,37 @@ final class NoteSaver: Identifiable {
     private var inFlight: Task<Bool, Never>?
     /// A lost response may follow a committed POST. Retry its exact payload and key, then PATCH
     /// any newer text. This also supports servers that require identical replay payloads.
-    private var createPayload: (title: String?, body: String)?
+    struct CreatePayload: Codable { let title: String?; let body: String }
+    private var createPayload: CreatePayload?
+    @ObservationIgnored var recoveryDidChange: (() -> Void)?
 
-    init(noteId: Int?, text: String) {
+    struct Snapshot: Codable {
+        let id: UUID
+        let noteId: Int?
+        let text: String
+        let lastSavedText: String
+        let hidden: Bool
+        let createPayload: CreatePayload?
+    }
+
+    var recoverySnapshot: Snapshot? {
+        guard hasUnsavedChanges || createPayload != nil else { return nil }
+        return Snapshot(id: id, noteId: noteId, text: text, lastSavedText: lastSavedText, hidden: hidden,
+                        createPayload: createPayload)
+    }
+
+    init(recovering snapshot: Snapshot) {
+        id = snapshot.id
+        hidden = snapshot.hidden
+        noteId = snapshot.noteId
+        text = snapshot.text
+        lastSavedText = snapshot.lastSavedText
+        createPayload = snapshot.createPayload
+    }
+
+    init(noteId: Int?, text: String, hidden: Bool = false) {
+        self.hidden = hidden
+        self.id = UUID()
         self.noteId = noteId
         self.text = text
         self.lastSavedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -59,7 +88,7 @@ final class NoteSaver: Identifiable {
     /// erase (Delete is the explicit way to remove a note), so it is never persisted over content.
     var hasUnsavedChanges: Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty && trimmed != lastSavedText
+        return createPayload != nil || (!trimmed.isEmpty && trimmed != lastSavedText)
     }
 
     var isFailed: Bool { if case .failed = state { return true } else { return false } }
@@ -81,7 +110,8 @@ final class NoteSaver: Identifiable {
         let id = noteId
         if id == nil, createPayload == nil {
             let title = Note.firstLine(of: text)
-            createPayload = (title.isEmpty ? nil : title, text)
+            createPayload = CreatePayload(title: title.isEmpty ? nil : title, body: text)
+            recoveryDidChange?()
         }
         let full = id == nil ? createPayload!.body : text
         let trimmed = full.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -97,6 +127,7 @@ final class NoteSaver: Identifiable {
                 }
                 self.lastSavedText = trimmed
                 self.state = .saved
+                self.recoveryDidChange?()
                 return true
             } catch {
                 self.state = .failed(Self.describe(error))
@@ -128,11 +159,17 @@ final class NoteSaver: Identifiable {
         return true
     }
 
+    func setHidden(_ hidden: Bool) {
+        self.hidden = hidden
+        recoveryDidChange?()
+    }
+
     /// Mark `text` as what the server now holds (e.g. after restoring a revision).
     func markSaved(_ text: String) {
         self.text = text
         lastSavedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         state = .saved
+        recoveryDidChange?()
     }
 
     /// Typing after a save resets the indicator (a failure stays visible until a save succeeds).

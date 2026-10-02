@@ -204,6 +204,27 @@ and streaming endpoints use their own connections. This was tested at the ASGI
 response-send boundary with FastAPI 0.141.1 / Starlette 1.6.0; ordinary TestClient
 calls alone wait for cleanup and cannot prove that timing guarantee.
 
+
+### Device-local unsent note recovery (updated 2026-10-02)
+
+The app keeps atomic recovery files for the calendar's note draft and unsent
+note editors. Recovery belongs to a server and account identity (including
+account creation time); signing out retains it for that account, while account
+deletion removes it. Another account cannot see or retry those edits. Reopening
+a second window for the same account preserves active editor ownership.
+
+An uncertain create retains its original key and payload across relaunch.
+Later edits are applied by PATCH after that create is acknowledged. Saved or
+explicitly discarded edits remove their recovery record. Unreadable records are
+kept and reported; disk-write failure warns the user to keep the app open until
+saving succeeds. Hidden notes retain their veil in recovered editors. Recovery
+files are excluded from backup and use device file protection.
+
+This is unsent-work recovery, not an offline copy of the server database. Voice
+audio/review state and log/schedule drafts are not covered by these recovery
+files. Transport retries keep their original session identity; stale responses
+cannot replace a newer account's cookies or sign that account out.
+
 ---
 
 ## 5. Auth & the memorable access token

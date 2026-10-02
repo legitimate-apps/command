@@ -359,3 +359,48 @@ def test_archived_assignment_hidden_from_delegatee(conn: sqlite3.Connection) -> 
     assert [x.id for x in delegatee_access.my_assignments(conn, aid, helper.id)] == [a.id]
     A.set_archived(conn, aid, a.id, True)
     assert delegatee_access.my_assignments(conn, aid, helper.id) == []
+
+
+@pytest.mark.parametrize("occurrence_date", [
+    "not-a-date", "2026-06-14", "2026-06-16", "2026-06-22", "2026-06-15T09:00:00Z",
+    "0001-01-01", "9999-12-31",
+])
+def test_occurrence_status_rejects_nonexistent_dates_without_logging(
+    conn: sqlite3.Connection, occurrence_date: str,
+) -> None:
+    aid = _acct(conn)
+    a = A.create(
+        conn, aid, title="Monday check-in", schedule_kind="routine",
+        rrule="FREQ=WEEKLY;BYDAY=MO;COUNT=1", scheduled_start="2026-06-15T09:00:00Z",
+    )
+    with pytest.raises(NotFound, match="No occurrence"):
+        A.set_occurrence_status(conn, aid, a.id, occurrence_date, "done")
+    assert conn.execute("SELECT COUNT(*) FROM occurrence_status").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 0
+    assert A.get(conn, aid, a.id).status == "todo"
+
+
+def test_occurrence_status_allows_each_day_of_a_multiday_one_off(conn: sqlite3.Connection) -> None:
+    aid = _acct(conn)
+    a = A.create(
+        conn, aid, title="Conference",
+        scheduled_start="2026-06-15T09:00:00Z", scheduled_end="2026-06-17T17:00:00Z",
+    )
+    A.set_occurrence_status(conn, aid, a.id, "2026-06-16", "skipped")
+    cal = A.calendar(conn, aid, "2026-06-15T00:00:00Z", "2026-06-18T00:00:00Z")
+    assert [o.status for o in cal] == ["todo", "skipped", "todo"]
+
+
+@pytest.mark.parametrize(("start", "timezone", "key"), [
+    ("2026-10-02T00:15:00+14:00", None, "2026-10-02"),
+    ("2026-10-02T23:45:00-12:00", None, "2026-10-02"),
+    ("2026-10-31T09:00:00-04:00", "America/New_York", "2026-11-02"),
+])
+def test_occurrence_status_uses_calendar_local_key(conn, start, timezone, key) -> None:
+    aid = _acct(conn)
+    a = A.create(conn, aid, title="Local routine", schedule_kind="routine", rrule="FREQ=DAILY",
+                 scheduled_start=start, timezone=timezone)
+    A.set_occurrence_status(conn, aid, a.id, key, "done")
+    cal = A.calendar(conn, aid, "2026-10-01T00:00:00Z", "2026-11-04T00:00:00Z")
+    done = [o.occurrence_date for o in cal if o.status == "done"]
+    assert done == [key]

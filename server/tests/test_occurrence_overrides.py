@@ -179,3 +179,23 @@ def test_rest_reschedule_roundtrip(client: TestClient) -> None:
     target2 = next(o for o in cal2 if o["occurrence_date"] == "2026-08-05")
     assert target2["occurs_at"].startswith("2026-08-05T09:00")
     assert target2["rescheduled"] is False
+
+
+def test_rest_occurrence_status_rejects_nonexistent_schedule_date(client: TestClient) -> None:
+    client.post("/api/auth/register", json={"username": "owner", "password": "password1"})
+    a = client.post(
+        "/api/assignments",
+        json={"title": "Monday review", "schedule_kind": "routine", "rrule": "FREQ=WEEKLY;BYDAY=MO",
+              "scheduled_start": "2026-10-05T09:00:00Z"},
+    ).json()
+    result = client.post(
+        f"/api/assignments/{a['id']}/occurrences/2026-10-06/status", json={"status": "done"},
+    )
+    assert result.status_code == 404
+    assert result.json()["error"]["code"] == "not_found"
+    assert "occurrence_date" in result.json()["error"]["hint"]
+    valid = client.post(
+        f"/api/assignments/{a['id']}/occurrences/2026-10-05/status", json={"status": "done"},
+    )
+    assert valid.status_code == 200 and valid.json() == {"updated": True}
+    assert client.get(f"/api/assignments/{a['id']}").json()["status"] == "todo"
