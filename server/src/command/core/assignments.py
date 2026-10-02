@@ -936,12 +936,18 @@ def _is_occurrence_date(a: Assignment, occurrence_date: str) -> bool:
         d = datetime.fromisoformat(occurrence_date).date()
     except (ValueError, TypeError):
         return False
-    zone = _zone(a.timezone)
+    if d.isoformat() != occurrence_date:
+        return False
+    # Legacy schedules can retain a fixed UTC offset without an IANA zone. Match the
+    # calendar's actual date key in that same zone, and avoid date arithmetic overflowing
+    # for otherwise valid boundary dates such as 0001-01-01 or 9999-12-31.
+    zone = _zone(a.timezone) or (_parse_dt(a.scheduled_start).tzinfo if a.scheduled_start else UTC)
     day_anchor = datetime(d.year, d.month, d.day, tzinfo=zone or UTC)
-    margin = timedelta(hours=36)
     return any(
         t[0].date().isoformat() == occurrence_date
-        for t in _original_instants(a, day_anchor - margin, day_anchor + timedelta(days=1) + margin)
+        for t in _original_instants(
+            a, day_anchor, day_anchor.replace(hour=23, minute=59, second=59, microsecond=999999)
+        )
     )
 
 
@@ -956,6 +962,14 @@ def set_occurrence_status(
     current = get(conn, account_id, assignment_id)  # ownership
     if status not in VALID_STATUS:
         raise ValidationError(f"status must be one of {sorted(VALID_STATUS)}.")
+    # The key identifies a real ORIGINAL schedule date, even after a reschedule moves its
+    # display time to a different day. Reject typos before writing a status or a completion
+    # fact: an arbitrary date must not invent work that never appeared in the plan.
+    if not _is_occurrence_date(current, occurrence_date):
+        raise NotFound(
+            f"No occurrence of this assignment on {occurrence_date}.",
+            hint="Use occurrence_date from the calendar, including for rescheduled occurrences.",
+        )
     prior = conn.execute(
         "SELECT status FROM occurrence_status WHERE assignment_id = ? AND occurrence_date = ?",
         (assignment_id, occurrence_date),
