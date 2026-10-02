@@ -345,3 +345,19 @@ process remains. Changes are on the same review branch/PR; no merge or deploymen
   `voice-restore-validation-{red,green,process}.log` under `/tmp/command-astra-1002/`.
 - Next: integrated target compilation, then shared app lifecycle/microphone ownership and note-only
   recovery UI integration with proper account deletion/teardown. No partial UI activation is present.
+
+## Reset-window terminal cleanup — 13:30 EDT
+- OBSERVED integrated iOS Simulator and Mac Catalyst builds passed at commit 32f7e8b
+  (`voice-current-{ios,catalyst}-build.log`). No simulator was booted.
+- Added a failing filesystem-cleanup regression: after note acknowledgment, deleting the manifest
+  before a failed audio unlink stranded the editable flow (1 test, 4 failed assertions).
+- Terminal cleanup now atomically renames the capture directory before unlinking. A failed rename
+  retains the pending capture; a failed unlink leaves a terminal private directory, visibly reports
+  cleanup pending, and discovery retries only these explicitly retired directories.
+- OBSERVED fixed source: **43 native XCTest cases passed**, **8 strict process-death cases passed**.
+  Evidence: `/tmp/command-astra-1002/voice-terminal-{red,green,process}.log`.
+- Updated the reproduction README and ownership design status to distinguish the implemented
+  opt-in primitives from the historical failing baseline and still-unwired RecordingSheet.
+- Still unfinished: shared microphone/account lifecycle coordinator, retained sheet disappearance,
+  real recorder crash behavior, acknowledged assistant handoff and actual app recovery UI. Next:
+  wire-test durable note reconciliation against the local REST server before activating app recovery.

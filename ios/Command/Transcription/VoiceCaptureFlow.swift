@@ -283,7 +283,9 @@ final class VoiceCaptureFlow {
         guard ownsRecording else { return false }
         if let recoveredRecordingID, let recovery {
             do {
-                try recovery.discard(recoveredRecordingID)
+                if try !recovery.discard(recoveredRecordingID) {
+                    errorMessage = "This recording is finished. Its private audio cleanup will be retried."
+                }
                 recovery.release(recoveredRecordingID, owner: recordingOwner)
             }
             catch {

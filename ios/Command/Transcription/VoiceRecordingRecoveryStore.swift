@@ -25,6 +25,7 @@ final class VoiceRecordingRecoveryStore {
     enum RecoveryError: Error { case invalidRecord }
     let directory: URL
     private let files = FileManager.default
+    private let removeItem: (URL) throws -> Void
     private static var owners: [URL: UUID] = [:]
 
     func claim(_ id: UUID, owner: UUID) {
@@ -38,7 +39,9 @@ final class VoiceRecordingRecoveryStore {
         if Self.owners[key] == owner { Self.owners.removeValue(forKey: key) }
     }
 
-    init(root: URL, server: URL, accountID: Int, username: String, accountCreatedAt: String) {
+    init(root: URL, server: URL, accountID: Int, username: String, accountCreatedAt: String,
+         removeItem: @escaping (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }) {
+        self.removeItem = removeItem
         let identity = [server.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
                         String(accountID), username, accountCreatedAt].joined(separator: "\n")
         let scope = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -121,6 +124,12 @@ final class VoiceRecordingRecoveryStore {
         var recordings: [Recording] = []
         var unreadable = false
         for folder in folders {
+            let name = folder.lastPathComponent
+            if name.hasPrefix(".discarded-"), UUID(uuidString: String(name.dropFirst(11))) != nil {
+                // Only an explicit terminal rename authorizes cleanup; unknown files are retained.
+                try? removeItem(folder)
+                continue
+            }
             let manifest = folder.appendingPathComponent("manifest.json")
             guard files.fileExists(atPath: manifest.path) else { continue }
             do {
@@ -151,12 +160,16 @@ final class VoiceRecordingRecoveryStore {
         return url
     }
 
-    /// Removing the manifest first makes a crash during cleanup non-replayable. Leftover audio
-    /// remains private; it is never mistaken for another pending recording.
-    func discard(_ id: UUID) throws {
+    /// The same-volume rename is the terminal checkpoint. If it fails, the intact capture
+    /// remains pending. Once it succeeds, failed unlink is cleanup work, never a pending note.
+    /// Returns whether cleanup finished; false still means the capture is durably terminal.
+    @discardableResult
+    func discard(_ id: UUID) throws -> Bool {
         let folder = directory.appendingPathComponent(id.uuidString, isDirectory: true)
-        let manifest = folder.appendingPathComponent("manifest.json")
-        if files.fileExists(atPath: manifest.path) { try files.removeItem(at: manifest) }
-        if files.fileExists(atPath: folder.path) { try files.removeItem(at: folder) }
+        let retired = directory.appendingPathComponent(".discarded-" + id.uuidString, isDirectory: true)
+        if files.fileExists(atPath: folder.path) { try files.moveItem(at: folder, to: retired) }
+        guard files.fileExists(atPath: retired.path) else { return true }
+        do { try removeItem(retired); return true }
+        catch { return false }
     }
 }

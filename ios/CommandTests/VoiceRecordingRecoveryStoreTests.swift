@@ -257,6 +257,29 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         let saved = await flow.saveRecoveredNote(locale: nil, using: operations)
         XCTAssertTrue(saved); XCTAssertEqual(creates, 1)
     }
+    func testCleanupFailureCannotResurrectOrStrandAcknowledgedCapture() async throws {
+        var blockCleanup = true
+        let owner = VoiceRecordingRecoveryStore(root: root.appendingPathComponent("recovery"),
+            server: URL(string: "https://example.com")!, accountID: 1, username: "tester",
+            accountCreatedAt: "first", removeItem: { url in
+                if blockCleanup && url.lastPathComponent != "manifest.json" { throw URLError(.cannotRemoveFile) }
+                try FileManager.default.removeItem(at: url)
+            })
+        let flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source()); flow.transcript = "acknowledged note"
+        let id = flow.captureID
+        let saved = await flow.saveRecoveredNote(locale: nil, using: .init(create: { _ in 42 }, update: { _, _ in }))
+        XCTAssertTrue(saved, "A completed capture must be terminal even if unlink fails")
+        XCTAssertNil(flow.audioURL)
+        XCTAssertNotNil(flow.errorMessage, "Private audio cleanup remains visible")
+        XCTAssertTrue(try owner.load().recordings.isEmpty)
+        XCTAssertThrowsError(try owner.recording(id: id))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: owner.directory.appendingPathComponent(id.uuidString).path))
+        blockCleanup = false
+        _ = try owner.load()
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: owner.directory.path).isEmpty,
+                      "Known terminal leftovers should be cleaned on the next discovery")
+    }
     func testManifestCannotReferenceAnOutsideFile() throws {
         let owner = store()
         XCTAssertThrowsError(try owner.audioURL(for: .init(version: 1, id: UUID(), filename: "../../outside.m4a")))

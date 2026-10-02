@@ -1,6 +1,6 @@
 # Voice capture ownership and process-death recovery
 
-Status: **proposed implementation contract; not implemented**. The first reproductions are
+Status: **partially implemented in opt-in production primitives; app integration pending**. The first reproductions are
 committed in `ios/recovery-repro/`. This note records the work needed to turn the existing
 within-process voice safety into durable recovery, without changing the capture product flow.
 
@@ -12,7 +12,10 @@ URL, transcript, engine, revision, and create attempt only in memory. Its defaul
 during transcription, during edited review, or while awaiting a create response leaves a new
 process unable to discover the capture or reuse the pending request key.
 
-The native subprocess reproducer compiles actual production source, reaches those boundaries,
+The initial native subprocess reproducer compiled actual production source and reached those boundaries.
+Its historical baseline below predates the opt-in durable store. The current eight cases pass
+through production discovery/restoration, including later-edit reconciliation; RecordingSheet
+still uses its nonpersistent default. The reproducer
 uses SIGKILL, checks the exit signal, and launches a different process. Three existing-behavior
 controls pass; four recovery assertions are expected failures. Strict mode fails those four
 assertions. The raw fixture file survives the kill, which separates lost discovery/metadata
@@ -124,6 +127,9 @@ that is a separate boundary from successful remote submission.
    queue, accepted durable draft transfer, and uncertain assistant send. Assert no duplicated,
    cross-account, or unintended submissions. Run iOS tests, Catalyst build, and UI verification.
 
-The bounded 2026-10-02 follow-on delivers the baseline and this contract only. Production
-persistence is deliberately not partially wired into the app: unfinished recording durability,
+The first bounded 2026-10-02 follow-on delivered the baseline and this contract. The later
+operator-authorized reset window added account-scoped audio, review and complete note-request
+checkpoints, ownership fencing, note-ID/PATCH reconciliation and terminal cleanup. These
+primitives pass native and process-death checks. Production persistence remains opt-in and
+is not wired into the app: unfinished recording durability,
 destructive lifecycle callbacks, and unacknowledged handoff must be solved and verified together.

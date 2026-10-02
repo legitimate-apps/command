@@ -1,12 +1,12 @@
 # Voice process-death reproduction
 
-**Current implementation checkpoint:** all seven original cases pass in strict mode through the
-opt-in production audio/review/attempt restore API. RecordingSheet is not yet wired to it; this
-is not end-to-end app recovery. Later edits after an uncertain create still need note-ID/PATCH
-reconciliation. The historical baseline and intermediate results below document progression.
+**Current implementation checkpoint:** all eight cases pass through the opt-in production
+account-scoped audio/review/request restore API. The eighth case reconciles later edits after
+an uncertain create using the original request identity and a PATCH to its returned note ID.
+RecordingSheet is not yet wired to recovery; this is not end-to-end app recovery.
 
 An opt-in native macOS harness for the current voice recovery gap. It copies unmodified
-production `VoiceCaptureFlow`, `CreateAttempt`, and shared validation source into a tiny SwiftPM
+production `VoiceCaptureFlow`, `VoiceRecordingRecoveryStore`, `CreateAttempt`, and shared validation source into a tiny SwiftPM
 executable, then Python tests kill and relaunch that executable. No third-party dependency,
 microphone, simulator, server, or app account is used.
 
@@ -19,7 +19,7 @@ python3 ios/recovery-repro/test_voice_process_recovery.py --build-dir "$VOICE_RE
 python3 ios/recovery-repro/test_voice_process_recovery.py --build-dir "$VOICE_REPRO_DD" --require-recovery
 ```
 
-Current result:
+Historical test-first baseline (before the production store was implemented):
 
 - Default characterization: **7 cases, 3 controls passed, 4 expected failures**.
 - `--require-recovery`: **4 ordinary failures**, exit 1. This is the test-first acceptance baseline,
@@ -33,12 +33,12 @@ Harness/precondition failures occur in `setUp` and cannot count as expected reco
 Every child has a bounded wait and cleanup. Temporary fixtures are deleted at test end.
 
 The observation file is an **external oracle** only: the worker never reads it. A fresh launch
-constructs the same default flow as the current recording sheet. The uncertain-create case
-re-enters the exact original payload after relaunch to isolate retry-key loss from transcript
-loss. It captures the request callback before a response; it does not contact a real server.
+constructs a flow through production store discovery and restoration. The uncertain-create
+cases restore the original body, engine, locale and key, including separately retained later
+edits. They capture the request callback before a response; they do not contact a real server.
 
 The WAV fixture is valid finalized 16 kHz mono audio, but no decoding is invoked. These tests
-prove loss of flow discovery, metadata and retry identity across actual process death. They do
+exercise flow discovery, metadata and retry identity across actual process death. They do
 not prove recovery of unfinished M4A, AVAudioSession behavior, actual app bootstrap, account
 isolation, or UI integration. The stop checkpoint begins at `flow.adopt`, not an actual recorder.
 
