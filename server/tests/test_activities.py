@@ -223,3 +223,19 @@ def test_activities_permission_gate(conn: sqlite3.Connection) -> None:
 
     with pytest.raises(PermissionDenied):
         P.require(conn, aid, "activities", "delete")
+
+
+@pytest.mark.parametrize("occurrence_date", [None, "2026-10-02"])
+def test_hidden_assignment_completion_inherits_visibility(conn: sqlite3.Connection, occurrence_date) -> None:
+    aid = _acct(conn)
+    a = A.create(conn, aid, title="Private routine", hidden=True, schedule_kind="routine",
+                 rrule="FREQ=DAILY", scheduled_start="2026-10-01T09:00:00Z")
+    if occurrence_date is None:
+        A.set_status(conn, aid, a.id, "done")
+    else:
+        A.set_occurrence_status(conn, aid, a.id, occurrence_date, "done")
+    assert ACT.search(conn, aid, assignment_id=a.id)[0] == []
+    facts = ACT.search(conn, aid, assignment_id=a.id, include_hidden=True)[0]
+    assert len(facts) == 1 and facts[0].hidden
+    with pytest.raises(NotFound):
+        ACT.get_for_agent(conn, aid, facts[0].id, include_hidden=False)
