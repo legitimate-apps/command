@@ -19,7 +19,18 @@ import Observation
 final class VoiceCaptureFlow {
     /// The finished recording, kept until it's committed or discarded.
     private(set) var audioURL: URL?
-    var transcript = "" { didSet { if transcript != oldValue { noteCreate.reset() } } }
+    var transcript = "" {
+        didSet {
+            if transcript != oldValue {
+                reviewRevision = UUID()
+                noteCreate.reset()
+            }
+        }
+    }
+    /// Changes whenever another capture replaces this one, even if it reuses a file URL.
+    private(set) var captureID = UUID()
+    private var reviewRevision = UUID()
+    private var transcriptionAttempt = UUID()
     private var noteCreate = CreateAttempt()
     private struct NotePayload: Encodable { let text: String; let engine: String }
     private(set) var engineUsed = ""
@@ -37,6 +48,7 @@ final class VoiceCaptureFlow {
 
     /// A new recording is starting: drop the previous one and any leftover review state.
     func reset() {
+        captureID = UUID()
         discardAudio()
         noteCreate.reset()
         transcript = ""
@@ -46,10 +58,23 @@ final class VoiceCaptureFlow {
         isCancelled = false
     }
 
+    /// A permission prompt can outlive the sheet. Nil means the caller must not start recording
+    /// or change its UI because this capture was cancelled or replaced while the prompt was up.
+    func requestPermission(using request: () async -> Bool) async -> Bool? {
+        guard !isCancelled, !Task.isCancelled else { return nil }
+        let capture = captureID
+        let granted = await request()
+        guard !isCancelled, !Task.isCancelled, captureID == capture else { return nil }
+        return granted
+    }
+
     /// The recorder finished; keep its file for transcription (and any retry of it).
     func adopt(_ url: URL) {
         if let old = audioURL, old != url { removeFile(old) }
-        if audioURL != url { noteCreate.reset() }
+        if audioURL != url {
+            captureID = UUID()
+            noteCreate.reset()
+        }
         audioURL = url
     }
 
@@ -59,10 +84,14 @@ final class VoiceCaptureFlow {
     /// while transcribing (the result is dropped; nothing is handed on).
     func transcribe(immediateUse: Bool,
                     using transcribe: (URL) async throws -> (text: String, engine: String)) async -> String? {
-        guard let url = audioURL, !isCancelled else { return nil }
+        guard let url = audioURL, !isCancelled, !Task.isCancelled else { return nil }
+        let capture = captureID, revision = reviewRevision
+        let attempt = UUID()
+        transcriptionAttempt = attempt
         do {
             let result = try await transcribe(url)
-            guard !isCancelled else { return nil }
+            guard !isCancelled, !Task.isCancelled, captureID == capture,
+                  reviewRevision == revision, transcriptionAttempt == attempt else { return nil }
             transcript = result.text
             engineUsed = result.engine
             errorMessage = nil
@@ -72,23 +101,30 @@ final class VoiceCaptureFlow {
                 return cleaned
             }
         } catch {
-            guard !isCancelled else { return nil }
+            guard !isCancelled, !Task.isCancelled, captureID == capture,
+                  reviewRevision == revision, transcriptionAttempt == attempt else { return nil }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             transcriptionFailed = true
         }
         return nil
     }
 
-    /// Save the reviewed transcript as a note via `save` (true on success). The recording is
-    /// released only once the note is committed; on failure it's kept and the error shown.
+    /// Save the reviewed transcript. Returns true only when the current review was committed and
+    /// may close. Completion of an older save must not discard newer edits or another recording.
+    /// A failed current save keeps the recording and shows the error for retry.
     func saveNote(using save: (_ text: String, _ engine: String, _ key: String) async -> String?) async -> Bool {
-        guard !saving else { return false }
+        guard !saving, !isCancelled, !Task.isCancelled else { return false }
+        let capture = captureID, revision = reviewRevision
+        let text = transcript
         saving = true
         defer { saving = false }
         do {
             let engine = engineUsed.isEmpty ? "sfspeech" : engineUsed
-            let key = try noteCreate.key(for: NotePayload(text: transcript, engine: engine))
-            if let failure = await save(transcript, engine, key) {
+            let key = try noteCreate.key(for: NotePayload(text: text, engine: engine))
+            let failure = await save(text, engine, key)
+            guard !isCancelled, !Task.isCancelled, captureID == capture,
+                  reviewRevision == revision else { return false }
+            if let failure {
                 errorMessage = failure
                 return false
             }
@@ -108,6 +144,7 @@ final class VoiceCaptureFlow {
     /// The user cancelled (or the sheet went away): drop the recording and suppress any in-flight
     /// transcription's result.
     func cancel() {
+        captureID = UUID()
         isCancelled = true
         discardAudio()
     }
