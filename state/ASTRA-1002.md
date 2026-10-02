@@ -185,3 +185,17 @@ compile Catalyst, then push this branch and open a PR. No new item after 12:10; 
 5. Existing historical completion activities are not migrated; new facts inherit current visibility.
 
 No unfinished source change is being handed off. No task has been started merely to spend usage.
+
+## Bounded follow-on — 12:36 EDT (operator reopened scope)
+- New deadline: commit/push this item by 12:50, then stop; no merges or deployments.
+- Test-first scope: crash/relaunch voice reproduction plus ownership/retention design. Production
+  recovery will only be implemented if it can be fully verified safely within the deadline.
+- Added an opt-in native subprocess harness compiling unmodified production VoiceCaptureFlow,
+  CreateAttempt and validation source. It SIGKILLs at stopped, in-flight transcription, edited
+  review and uncertain-create checkpoints, then launches a fresh process. It never restores
+  from its observer JSON. No simulator/microphone/server was started.
+- OBSERVED: **7 cases: 3 controls pass, 4 explicitly expected durability failures**. Strict
+  `--require-recovery` mode produces **4 ordinary failures**. Thus voice process-death recovery
+  remains missing; this is a reproducer, not a claim that the feature is implemented.
+- Logs: `/tmp/command-astra-1002/voice-process-{characterization,required}.log`.
+- One leased native DerivedData directory is in use for the harness and will be released.
