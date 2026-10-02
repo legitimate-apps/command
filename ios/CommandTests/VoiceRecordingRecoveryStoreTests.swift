@@ -20,30 +20,30 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         let original = try source(), owner = store()
         let record = try owner.keep(original, id: UUID())
         try FileManager.default.removeItem(at: original)
-        let restarted = store(), recovered = try XCTUnwrap(restarted.recordings().first)
+        let restarted = store(), recovered = try XCTUnwrap(restarted.load().recordings.first)
         XCTAssertEqual(record.id, recovered.id)
         XCTAssertEqual(try Data(contentsOf: restarted.audioURL(for: recovered)), Data("opaque audio fixture".utf8))
     }
     func testAccountServerAndRecreatedAccountCannotDiscoverAudio() throws {
         _ = try store().keep(source(), id: UUID())
-        XCTAssertTrue(try store(id: 2).recordings().isEmpty)
-        XCTAssertTrue(try store(server: "https://other.example.com").recordings().isEmpty)
-        XCTAssertTrue(try store(created: "recreated").recordings().isEmpty)
-        XCTAssertEqual(try store().recordings().count, 1)
+        XCTAssertTrue(try store(id: 2).load().recordings.isEmpty)
+        XCTAssertTrue(try store(server: "https://other.example.com").load().recordings.isEmpty)
+        XCTAssertTrue(try store(created: "recreated").load().recordings.isEmpty)
+        XCTAssertEqual(try store().load().recordings.count, 1)
     }
     func testDiscardDoesNotResurrectAndRemovesOwnedAudio() throws {
         let owner = store(), record = try owner.keep(source(), id: UUID())
         let audio = try owner.audioURL(for: record)
         try owner.discard(record.id)
         XCTAssertFalse(FileManager.default.fileExists(atPath: audio.path))
-        XCTAssertTrue(try store().recordings().isEmpty)
+        XCTAssertTrue(try store().load().recordings.isEmpty)
         try owner.discard(record.id)
     }
     func testCorruptManifestIsReportedAndKept() throws {
         let owner = store(), record = try owner.keep(source(), id: UUID())
         let manifest = owner.directory.appendingPathComponent(record.id.uuidString).appendingPathComponent("manifest.json")
         try Data("broken".utf8).write(to: manifest)
-        XCTAssertThrowsError(try owner.recordings())
+        XCTAssertTrue(try owner.load().unreadable)
         XCTAssertTrue(FileManager.default.fileExists(atPath: manifest.path))
         XCTAssertNoThrow(try owner.audioURL(for: record))
     }
@@ -52,14 +52,14 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         _ = try owner.keep(original, id: id)
         XCTAssertThrowsError(try owner.keep(original, id: id))
         XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
-        XCTAssertEqual(try owner.recordings().count, 1)
+        XCTAssertEqual(try owner.load().recordings.count, 1)
     }
     func testReviewRestoresLatestEditsAndEngineWithAudio() async throws {
         let owner = store(), flow = VoiceCaptureFlow(recovery: owner)
         flow.adopt(try source())
         _ = await flow.transcribe(immediateUse: false) { _ in ("spoken", "parakeet-v3") }
         flow.transcript = "edited after transcription"
-        let record = try XCTUnwrap(store().recordings().first)
+        let record = try XCTUnwrap(store().load().recordings.first)
         let restored = VoiceCaptureFlow(recovery: store(), restoring: record)
         XCTAssertEqual(restored.transcript, "edited after transcription")
         XCTAssertEqual(restored.engineUsed, "parakeet-v3")
@@ -81,7 +81,7 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         flow.adopt(try source()); flow.transcript = "same payload"
         var originalKey = ""
         _ = await flow.saveNote { _, _, key in originalKey = key; return "response lost" }
-        let restored = VoiceCaptureFlow(recovery: store(), restoring: try XCTUnwrap(store().recordings().first))
+        let restored = VoiceCaptureFlow(recovery: store(), restoring: try XCTUnwrap(store().load().recordings.first))
         var replayKey = ""
         _ = await restored.saveNote { text, _, key in
             XCTAssertEqual(text, "same payload"); replayKey = key; return "still unavailable"
@@ -111,7 +111,7 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         try old.write(to: manifest)
         var submittedKey = ""
         _ = await flow.saveNote { _, _, key in submittedKey = key; return "response lost" }
-        let restored = VoiceCaptureFlow(recovery: store(), restoring: try XCTUnwrap(store().recordings().first))
+        let restored = VoiceCaptureFlow(recovery: store(), restoring: try XCTUnwrap(store().load().recordings.first))
         XCTAssertEqual(restored.transcript, "submitted review")
         _ = await restored.saveNote { text, _, key in
             XCTAssertEqual(text, "submitted review"); XCTAssertEqual(key, submittedKey); return "response lost"
@@ -129,6 +129,17 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         let saved = await flow.saveNote { _, _, _ in sent = true; return nil }
         XCTAssertFalse(sent); XCTAssertFalse(saved)
         XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
+    }
+    func testDamagedRecordingDoesNotHideIntactSibling() throws {
+        let owner = store()
+        let damaged = try owner.keep(source(), id: UUID())
+        let intact = try owner.keep(source(), id: UUID())
+        let manifest = owner.directory.appendingPathComponent(damaged.id.uuidString).appendingPathComponent("manifest.json")
+        try Data("damaged".utf8).write(to: manifest)
+        let recovered = try owner.load()
+        XCTAssertEqual(recovered.recordings.map(\.id), [intact.id])
+        XCTAssertTrue(recovered.unreadable)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: manifest.path))
     }
     func testManifestCannotReferenceAnOutsideFile() throws {
         let owner = store()

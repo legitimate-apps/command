@@ -11,7 +11,7 @@ struct VoiceRecoveryProbe {
         let recovery = VoiceRecordingRecoveryStore(root: directory.appendingPathComponent("recovery"),
             server: URL(string: "https://example.invalid")!, accountID: 1,
             username: "recovery-test", accountCreatedAt: "2026-10-02")
-        let restored = (mode == "relaunch" || mode == "retry") ? try recovery.recordings().first : nil
+        let restored = (mode == "relaunch" || mode == "retry") ? try recovery.load().recordings.first : nil
         let flow = VoiceCaptureFlow(recovery: recovery, restoring: restored)
         func snapshot(_ extra: [String: String] = [:]) throws {
             var value = extra

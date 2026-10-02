@@ -290,3 +290,13 @@ process remains. Changes are on the same review branch/PR; no merge or deploymen
 - Remaining review finding: one corrupt manifest currently blocks discovery of intact siblings.
   Fix discovery to report unreadable records separately before wiring recovery UI. Capture owner
   fencing, original-request/later-edit reconciliation and durable assistant transfer remain too.
+
+## Reset-window discovery hardening — 13:09 EDT
+- Added a failing sibling-recovery regression, then changed discovery to return intact recordings
+  plus an explicit unreadable flag. Damaged metadata/audio no longer hides other pending captures;
+  unreadable files are preserved. The process probe uses this production discovery API.
+- OBSERVED baseline control failed; fixed **33 native tests passed** and **7 strict process-death
+  cases passed**. Logs: `voice-discovery-{red,green,process}.log` under the run scratch directory.
+- Remaining next guarantee: capture owner fencing so a superseded flow cannot overwrite or delete
+  files restored by another flow/window. App/UI wiring and full reconciliation remain deferred
+  until these ownership and submission boundaries are complete.

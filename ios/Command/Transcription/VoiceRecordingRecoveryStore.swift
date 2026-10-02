@@ -75,18 +75,25 @@ final class VoiceRecordingRecoveryStore {
         try files.setAttributes([.posixPermissions: 0o600], ofItemAtPath: manifest.path)
     }
 
-    func recordings() throws -> [Recording] {
-        guard files.fileExists(atPath: directory.path) else { return [] }
-        return try files.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+    /// A damaged manifest must not hide intact siblings. Keep every unreadable file and make
+    /// the warning explicit so recovery UI can report incomplete discovery.
+    func load() throws -> (recordings: [Recording], unreadable: Bool) {
+        guard files.fileExists(atPath: directory.path) else { return ([], false) }
+        let folders = try files.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
-            .compactMap { folder in
-                let manifest = folder.appendingPathComponent("manifest.json")
-                guard files.fileExists(atPath: manifest.path) else { return nil }
+        var recordings: [Recording] = []
+        var unreadable = false
+        for folder in folders {
+            let manifest = folder.appendingPathComponent("manifest.json")
+            guard files.fileExists(atPath: manifest.path) else { continue }
+            do {
                 let record = try JSONDecoder().decode(Recording.self, from: Data(contentsOf: manifest))
                 guard record.id.uuidString == folder.lastPathComponent else { throw RecoveryError.invalidRecord }
                 _ = try audioURL(for: record)
-                return record
-            }
+                recordings.append(record)
+            } catch { unreadable = true }
+        }
+        return (recordings, unreadable)
     }
 
     func audioURL(for record: Recording) throws -> URL {
