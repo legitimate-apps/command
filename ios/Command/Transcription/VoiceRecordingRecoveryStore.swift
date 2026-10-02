@@ -5,6 +5,12 @@ import Foundation
 /// account lifecycle wiring are separate: callers must explicitly opt into this durable owner.
 @MainActor
 final class VoiceRecordingRecoveryStore {
+    struct NoteSubmission: Codable {
+        let body: String
+        let engine: String
+        let locale: String?
+        let key: String
+    }
     struct Recording: Codable {
         let version: Int
         let id: UUID
@@ -12,6 +18,9 @@ final class VoiceRecordingRecoveryStore {
         var transcript: String? = nil
         var engine: String? = nil
         var createAttempt: CreateAttempt? = nil
+        var noteSubmission: NoteSubmission? = nil
+        var savedNoteID: Int? = nil
+        var savedText: String? = nil
     }
     enum RecoveryError: Error { case invalidRecord }
     let directory: URL
@@ -81,6 +90,22 @@ final class VoiceRecordingRecoveryStore {
         _ = try audioURL(for: record)
         record.createAttempt = attempt
         record.transcript = transcript
+        record.engine = engine
+        try JSONEncoder().encode(record).write(to: manifest,
+            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try files.setAttributes([.posixPermissions: 0o600], ofItemAtPath: manifest.path)
+    }
+
+    func saveSubmission(id: UUID, submission: NoteSubmission, noteID: Int?, savedText: String?,
+                        review: String, engine: String) throws {
+        let manifest = directory.appendingPathComponent(id.uuidString).appendingPathComponent("manifest.json")
+        var record = try JSONDecoder().decode(Recording.self, from: Data(contentsOf: manifest))
+        guard record.id == id else { throw RecoveryError.invalidRecord }
+        _ = try audioURL(for: record)
+        record.noteSubmission = submission
+        record.savedNoteID = noteID
+        record.savedText = savedText
+        record.transcript = review
         record.engine = engine
         try JSONEncoder().encode(record).write(to: manifest,
             options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])

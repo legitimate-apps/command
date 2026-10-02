@@ -311,3 +311,16 @@ process remains. Changes are on the same review branch/PR; no merge or deploymen
   Logs: `/tmp/command-astra-1002/voice-owner-{green,process}.log`.
 - Scope is file/flow ownership, not the future app-wide microphone coordinator. Sheet/account
   integration, complete pending-create reconciliation and acknowledged assistant handoff remain.
+
+## Reset-window note reconciliation primitive — 13:17 EDT
+- Added a failing later-edit regression first: uncertain create followed by changed review created
+  two notes on the legacy path (1 test, 2 failures; `voice-reconcile-red.log`).
+- Added saveRecoveredNote operations with a durable original body/engine/locale/key, acknowledged
+  note ID and saved text. It replays the original create, checkpoints the returned ID before PATCH,
+  and applies later review edits to that same note. Edits during PATCH remain pending against its ID.
+- OBSERVED **39 native XCTest cases passed**, including lost-create response + later edits,
+  create acknowledgment + failed PATCH + restart (no second create), and edits arriving during
+  PATCH. Existing **7 strict process-death cases still pass**. Logs: `voice-reconcile-{green,process}.log`.
+- This NEW durable save entry point is not yet called by RecordingSheet. Legacy saveNote retains
+  its old changed-payload semantics; wire the durable entry point when enabling account recovery.
+  Need an extended hard-kill test for later-edit reconciliation, then app integration/verification.

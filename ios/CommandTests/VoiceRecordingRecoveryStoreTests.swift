@@ -166,6 +166,56 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         XCTAssertFalse(saved); XCTAssertFalse(sent)
         XCTAssertNotNil(restored.audioURL)
     }
+    func testLaterEditsAfterUncertainCreateMustNotCreateAnotherNote() async throws {
+        let owner = store(), original = VoiceCaptureFlow(recovery: owner)
+        original.adopt(try source()); original.transcript = "first submitted text"
+        var notes: [Int: String] = [:], keys: [String: Int] = [:]
+        var loseResponse = true
+        let operations = VoiceCaptureFlow.NoteOperations(create: { request in
+            XCTAssertEqual(request.body, "first submitted text")
+            XCTAssertEqual(request.locale, "en-US")
+            let id = keys[request.key] ?? keys.count + 1
+            keys[request.key] = id; notes[id] = notes[id] ?? request.body
+            if loseResponse { throw URLError(.networkConnectionLost) }
+            return id
+        }, update: { id, body in notes[id] = body })
+        _ = await original.saveRecoveredNote(locale: "en-US", using: operations)
+        original.transcript = "later edited text"
+        let restored = VoiceCaptureFlow(recovery: owner, restoring: try XCTUnwrap(owner.load().recordings.first))
+        loseResponse = false
+        let saved = await restored.saveRecoveredNote(locale: "fr-FR", using: operations)
+        XCTAssertTrue(saved)
+        XCTAssertEqual(notes.count, 1)
+        XCTAssertEqual(notes[1], "later edited text")
+        XCTAssertTrue(try owner.load().recordings.isEmpty)
+    }
+    func testAcknowledgedCreateThenFailedPatchResumesWithoutAnotherCreate() async throws {
+        let owner = store(), original = VoiceCaptureFlow(recovery: owner)
+        original.adopt(try source()); original.transcript = "original request"
+        var creates = 0
+        let first = VoiceCaptureFlow.NoteOperations(create: { _ in
+            creates += 1; original.transcript = "edited during create"; return 42
+        }, update: { _, _ in throw URLError(.notConnectedToInternet) })
+        let initial = await original.saveRecoveredNote(locale: nil, using: first)
+        XCTAssertFalse(initial)
+        let restored = VoiceCaptureFlow(recovery: owner, restoring: try XCTUnwrap(owner.load().recordings.first))
+        let second = VoiceCaptureFlow.NoteOperations(create: { _ in creates += 1; return 99 }, update: { id, text in
+            XCTAssertEqual(id, 42); XCTAssertEqual(text, "edited during create")
+        })
+        let saved = await restored.saveRecoveredNote(locale: nil, using: second)
+        XCTAssertTrue(saved); XCTAssertEqual(creates, 1)
+    }
+    func testEditsDuringPatchStayPendingAgainstSameNoteID() async throws {
+        let owner = store(), flow = VoiceCaptureFlow(recovery: owner)
+        flow.adopt(try source()); flow.transcript = "first"
+        let first = VoiceCaptureFlow.NoteOperations(create: { _ in flow.transcript = "second"; return 7 },
+            update: { _, _ in flow.transcript = "third" })
+        let saved = await flow.saveRecoveredNote(locale: nil, using: first)
+        XCTAssertFalse(saved)
+        let record = try XCTUnwrap(owner.load().recordings.first)
+        XCTAssertEqual(record.savedNoteID, 7); XCTAssertEqual(record.savedText, "second")
+        XCTAssertEqual(record.transcript, "third")
+    }
     func testManifestCannotReferenceAnOutsideFile() throws {
         let owner = store()
         XCTAssertThrowsError(try owner.audioURL(for: .init(version: 1, id: UUID(), filename: "../../outside.m4a")))

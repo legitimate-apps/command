@@ -46,6 +46,9 @@ final class VoiceCaptureFlow {
     private let recovery: VoiceRecordingRecoveryStore?
     private var recoveredRecordingID: UUID?
     private let recordingOwner = UUID()
+    private var noteSubmission: VoiceRecordingRecoveryStore.NoteSubmission?
+    private var savedNoteID: Int?
+    private var savedText: String?
     private var ownsRecording: Bool {
         guard let recovery, let recoveredRecordingID else { return true }
         return recovery.isOwner(recoveredRecordingID, owner: recordingOwner)
@@ -65,6 +68,9 @@ final class VoiceCaptureFlow {
                 transcript = recording.transcript ?? ""
                 engineUsed = recording.engine ?? ""
                 noteCreate = recording.createAttempt ?? CreateAttempt()
+                noteSubmission = recording.noteSubmission
+                savedNoteID = recording.savedNoteID
+                savedText = recording.savedText
             } catch { errorMessage = "Couldn't reopen the saved recording. Its files have been kept." }
         }
     }
@@ -74,6 +80,7 @@ final class VoiceCaptureFlow {
         guard discardAudio() else { return }
         captureID = UUID()
         noteCreate.reset()
+        noteSubmission = nil; savedNoteID = nil; savedText = nil
         transcript = ""
         engineUsed = ""
         errorMessage = nil
@@ -97,6 +104,7 @@ final class VoiceCaptureFlow {
         guard discardAudio() else { return }
         captureID = UUID()
         noteCreate.reset()
+        noteSubmission = nil; savedNoteID = nil; savedText = nil
         audioURL = url
         if let recovery {
             do {
@@ -179,6 +187,64 @@ final class VoiceCaptureFlow {
             errorMessage = error.localizedDescription
             return false
         }
+    }
+
+    struct NoteOperations {
+        var create: (VoiceRecordingRecoveryStore.NoteSubmission) async throws -> Int
+        var update: (Int, String) async throws -> Void
+    }
+
+    /// Durable note path: replay the original create, checkpoint its identity, then PATCH later
+    /// edits to that same note. A lost PATCH response is safe to repeat. The caller's operations
+    /// must use the capture's account/session and the exact request fields supplied here.
+    func saveRecoveredNote(locale: String?, using operations: NoteOperations) async -> Bool {
+        guard !saving, !isCancelled, !Task.isCancelled, ownsRecording,
+              recovery != nil, recoveredRecordingID != nil else { return false }
+        let capture = captureID
+        saving = true
+        defer { saving = false }
+        do {
+            if noteSubmission == nil {
+                let engine = engineUsed.isEmpty ? "sfspeech" : engineUsed
+                let key = try noteCreate.key(for: NotePayload(text: transcript, engine: engine))
+                noteSubmission = .init(body: transcript, engine: engine, locale: locale, key: key)
+            }
+            // Always write before transport, including retry after a previous checkpoint failed.
+            try checkpointSubmission()
+            guard let submission = noteSubmission else { return false }
+            if savedNoteID == nil {
+                let id = try await operations.create(submission)
+                guard !isCancelled, !Task.isCancelled, ownsRecording, captureID == capture else { return false }
+                savedNoteID = id
+                savedText = submission.body
+                try checkpointSubmission()
+            }
+            guard let id = savedNoteID else { return false }
+            let sent = transcript
+            if savedText != sent {
+                try await operations.update(id, sent)
+                guard !isCancelled, !Task.isCancelled, ownsRecording, captureID == capture else { return false }
+                savedText = sent
+                try checkpointSubmission()
+            }
+            // New edits during PATCH remain recoverable and keep the review open for another pass.
+            guard transcript == savedText else { return false }
+            errorMessage = nil
+            return discardAudio()
+        } catch {
+            guard !isCancelled, ownsRecording, captureID == capture else { return false }
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func checkpointSubmission() throws {
+        guard ownsRecording, let recovery, let recoveredRecordingID, let noteSubmission else {
+            throw VoiceRecordingRecoveryStore.RecoveryError.invalidRecord
+        }
+        try recovery.saveSubmission(id: recoveredRecordingID, submission: noteSubmission,
+                                    noteID: savedNoteID, savedText: savedText,
+                                    review: transcript, engine: engineUsed)
     }
 
     /// The transcript was handed to the caller from review: the words are committed.
