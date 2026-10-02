@@ -300,3 +300,14 @@ process remains. Changes are on the same review branch/PR; no merge or deploymen
 - Remaining next guarantee: capture owner fencing so a superseded flow cannot overwrite or delete
   files restored by another flow/window. App/UI wiring and full reconciliation remain deferred
   until these ownership and submission boundaries are complete.
+
+## Reset-window ownership fencing — 13:11 EDT
+- Added three failing regressions first: superseded flow deletion, review overwrite and network
+  submission (**3 tests, 5 failed assertions** on prior code; `voice-owner-red.log`).
+- Explicit restore claims a per-capture owner token. Superseded flows cannot persist reviews,
+  start note requests/transcription, accept stale async results, or delete the current audio.
+  Tokens are scoped by the account recovery directory and capture ID, and released on cleanup.
+- OBSERVED fixed source: **36 native XCTest cases passed**, **7 strict process-death cases passed**.
+  Logs: `/tmp/command-astra-1002/voice-owner-{green,process}.log`.
+- Scope is file/flow ownership, not the future app-wide microphone coordinator. Sheet/account
+  integration, complete pending-create reconciliation and acknowledged assistant handoff remain.

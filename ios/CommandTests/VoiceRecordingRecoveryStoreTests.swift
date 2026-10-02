@@ -141,6 +141,31 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         XCTAssertTrue(recovered.unreadable)
         XCTAssertTrue(FileManager.default.fileExists(atPath: manifest.path))
     }
+    func testSupersededFlowCannotDiscardRestoredRecording() throws {
+        let owner = store(), original = VoiceCaptureFlow(recovery: owner)
+        original.adopt(try source()); original.transcript = "original"
+        let restored = VoiceCaptureFlow(recovery: owner, restoring: try XCTUnwrap(owner.load().recordings.first))
+        original.cancel()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(restored.audioURL).path))
+        XCTAssertEqual(try owner.load().recordings.count, 1)
+    }
+    func testSupersededFlowCannotOverwriteNewerReview() throws {
+        let owner = store(), original = VoiceCaptureFlow(recovery: owner)
+        original.adopt(try source()); original.transcript = "original"
+        let restored = VoiceCaptureFlow(recovery: owner, restoring: try XCTUnwrap(owner.load().recordings.first))
+        restored.transcript = "current owner"
+        original.transcript = "late stale edit"
+        XCTAssertEqual(try owner.load().recordings.first?.transcript, "current owner")
+    }
+    func testSupersededFlowCannotStartRequest() async throws {
+        let owner = store(), original = VoiceCaptureFlow(recovery: owner)
+        original.adopt(try source()); original.transcript = "original"
+        let restored = VoiceCaptureFlow(recovery: owner, restoring: try XCTUnwrap(owner.load().recordings.first))
+        var sent = false
+        let saved = await original.saveNote { _, _, _ in sent = true; return nil }
+        XCTAssertFalse(saved); XCTAssertFalse(sent)
+        XCTAssertNotNil(restored.audioURL)
+    }
     func testManifestCannotReferenceAnOutsideFile() throws {
         let owner = store()
         XCTAssertThrowsError(try owner.audioURL(for: .init(version: 1, id: UUID(), filename: "../../outside.m4a")))

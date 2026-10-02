@@ -16,6 +16,18 @@ final class VoiceRecordingRecoveryStore {
     enum RecoveryError: Error { case invalidRecord }
     let directory: URL
     private let files = FileManager.default
+    private static var owners: [URL: UUID] = [:]
+
+    func claim(_ id: UUID, owner: UUID) {
+        Self.owners[directory.appendingPathComponent(id.uuidString)] = owner
+    }
+    func isOwner(_ id: UUID, owner: UUID) -> Bool {
+        Self.owners[directory.appendingPathComponent(id.uuidString)] == owner
+    }
+    func release(_ id: UUID, owner: UUID) {
+        let key = directory.appendingPathComponent(id.uuidString)
+        if Self.owners[key] == owner { Self.owners.removeValue(forKey: key) }
+    }
 
     init(root: URL, server: URL, accountID: Int, username: String, accountCreatedAt: String) {
         let identity = [server.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
