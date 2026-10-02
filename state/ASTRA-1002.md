@@ -103,3 +103,16 @@ compile Catalyst, then push this branch and open a PR. No new item after 12:10; 
   Detailed commands, controls and MCP/REST/SQLite observations: `state/ASTRA-MCP-1002.md`.
 - OBSERVED: integrated app **Mac Catalyst BUILD SUCCEEDED**. Log:
   `/tmp/command-astra-1002/catalyst-build.log`. This is compilation evidence, not Mac UI evidence.
+
+## Verified multiwindow correction — 12:08 EDT
+- Independent review found repeated same-account bootstrap (another iPad/Mac window) retired
+  existing editors and transferred their recovery-file ownership. Account activation now preserves
+  the store for the same server/account scope and replaces it only for a changed scope or teardown.
+- OBSERVED: full app recompilation plus **15 recovery persistence iOS tests passed**, including
+  retaining editor/store identity and persisting edits typed after repeated activation.
+  Evidence: `/tmp/command-astra-1002/ios-window-tests.log`.
+- OBSERVED: quick draft survived termination with exact text. Offline editor recovery JSON retained
+  both the original uncertain-create payload/key and later body edits; relaunch displayed the
+  unsaved banner and Review showed exact text. Final save/DB check remains next.
+- PR opened: https://github.com/legitimate-apps/command/pull/1 . Both initial CI checks passed:
+  PII scan (5s) and server lock/type/test (5m17s). Latest correction is iOS-only.

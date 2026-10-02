@@ -187,6 +187,23 @@ final class NoteRecoveryPersistenceTests: XCTestCase {
         XCTAssertNotNil(store.recoveryError)
     }
 
+    func testRepeatedAccountActivationKeepsActiveEditorAndRecoveryOwnership() throws {
+        let client = APIClient(baseURL: URL(string: "https://example.com")!)
+        let app = AppState(client: client, noteRecoveryRoot: root)
+        let account = Account(id: 1, username: "tester", displayName: nil, createdAt: "2026-01-01T00:00:00Z")
+        app.activateNotes(for: account)
+        let original = app.notes
+        let (saver, _) = editing(original)
+        saver.text = "Before another window"
+        app.activateNotes(for: account)
+        XCTAssertTrue(app.notes === original, "same-account bootstrap must not retire open editors")
+        saver.text = "Typed after another window opens"
+        XCTAssertEqual(try recovery().loadEdits().edits.first?.text, saver.text)
+        app.activateNotes(for: Account(id: 2, username: "second", displayName: nil, createdAt: account.createdAt))
+        XCTAssertFalse(app.notes === original)
+        XCTAssertTrue(app.notes.unsavedEdits.isEmpty)
+    }
+
     func testSessionTeardownRetiresStoreAndDropsParkedEditsFromNextAccount() async {
         let client = APIClient(baseURL: URL(string: "https://example.invalid")!)
         let app = AppState(client: client, noteRecoveryRoot: root)

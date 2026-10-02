@@ -117,6 +117,7 @@ final class AppState {
     /// Shared notes state (capture bar + Notes list stay in sync).
     private(set) var notes = NotesStore()
     private let noteRecoveryRoot: URL
+    private var notesRecoveryScope: URL?
     /// Shared delegatee roster (People list + assignee pickers).
     let people = PeopleStore()
     /// Shared goals + assignments.
@@ -587,11 +588,18 @@ final class AppState {
 
     /// Post-sign-in fan-out: load the entitlement (consent + subscription state) and
     /// bind RevenueCat's identity to this account so its purchase webhook maps back.
-    private func onSignedIn() async {
+    /// A second window bootstraps the same account. Preserve its active editor owners;
+    /// only a changed account/server scope needs a new recovery store.
+    func activateNotes(for account: Account) {
+        let recovery = NoteRecoveryStore(root: noteRecoveryRoot, server: client.baseURL, account: account)
+        guard notesRecoveryScope != recovery.directory else { return }
         notes.deactivate()
-        if let account {
-            notes = NotesStore(recovery: NoteRecoveryStore(root: noteRecoveryRoot, server: client.baseURL, account: account))
-        }
+        notes = NotesStore(recovery: recovery)
+        notesRecoveryScope = recovery.directory
+    }
+
+    private func onSignedIn() async {
+        if let account { activateNotes(for: account) }
         await refreshEntitlement()
         // RevenueCat identity + offering load run OFF the critical path. A slow or
         // stalled StoreKit product fetch — e.g. a freshly-created sandbox product still
@@ -798,6 +806,7 @@ final class AppState {
         Task { [subscription] in await subscription.signOut() }
         notes.deactivate()
         notes = NotesStore()
+        notesRecoveryScope = nil
         people.delegatees = []
         tasks.assignments = []
         tasks.goals = []
