@@ -41,15 +41,27 @@ final class VoiceCaptureFlow {
     private(set) var isCancelled = false
 
     private let removeFile: (URL) -> Void
+    private let recovery: VoiceRecordingRecoveryStore?
+    private var recoveredRecordingID: UUID?
 
-    init(removeFile: @escaping (URL) -> Void = { try? FileManager.default.removeItem(at: $0) }) {
+    init(recovery: VoiceRecordingRecoveryStore? = nil,
+         restoring recording: VoiceRecordingRecoveryStore.Recording? = nil,
+         removeFile: @escaping (URL) -> Void = { try? FileManager.default.removeItem(at: $0) }) {
         self.removeFile = removeFile
+        self.recovery = recovery
+        if let recovery, let recording {
+            do {
+                audioURL = try recovery.audioURL(for: recording)
+                captureID = recording.id
+                recoveredRecordingID = recording.id
+            } catch { errorMessage = "Couldn't reopen the saved recording. Its files have been kept." }
+        }
     }
 
     /// A new recording is starting: drop the previous one and any leftover review state.
     func reset() {
+        guard discardAudio() else { return }
         captureID = UUID()
-        discardAudio()
         noteCreate.reset()
         transcript = ""
         engineUsed = ""
@@ -70,12 +82,21 @@ final class VoiceCaptureFlow {
 
     /// The recorder finished; keep its file for transcription (and any retry of it).
     func adopt(_ url: URL) {
-        if let old = audioURL, old != url { removeFile(old) }
-        if audioURL != url {
-            captureID = UUID()
-            noteCreate.reset()
-        }
+        guard audioURL != url else { return }
+        guard discardAudio() else { return }
+        captureID = UUID()
+        noteCreate.reset()
         audioURL = url
+        if let recovery {
+            do {
+                let record = try recovery.keep(url, id: captureID)
+                audioURL = try recovery.audioURL(for: record)
+                recoveredRecordingID = record.id
+                removeFile(url) // ownership transferred only after durable metadata publication
+            } catch {
+                errorMessage = "Couldn't keep a recovery copy of this recording. Keep Command open."
+            }
+        }
     }
 
     /// Transcribe the kept recording. Returns the cleaned transcript when `immediateUse` applies
@@ -149,8 +170,18 @@ final class VoiceCaptureFlow {
         discardAudio()
     }
 
-    private func discardAudio() {
+    @discardableResult
+    private func discardAudio() -> Bool {
+        if let recoveredRecordingID, let recovery {
+            do { try recovery.discard(recoveredRecordingID) }
+            catch {
+                errorMessage = "Couldn't remove the saved recording. Its cleanup can be retried."
+                return false
+            }
+        }
         if let url = audioURL { removeFile(url) }
         audioURL = nil
+        recoveredRecordingID = nil
+        return true
     }
 }

@@ -8,7 +8,11 @@ struct VoiceRecoveryProbe {
         let args = CommandLine.arguments
         let mode = args[1], directory = URL(fileURLWithPath: args[2], isDirectory: true)
         let audio = directory.appendingPathComponent("recording.wav")
-        let flow = VoiceCaptureFlow()
+        let recovery = VoiceRecordingRecoveryStore(root: directory.appendingPathComponent("recovery"),
+            server: URL(string: "https://example.invalid")!, accountID: 1,
+            username: "recovery-test", accountCreatedAt: "2026-10-02")
+        let restored = (mode == "relaunch" || mode == "retry") ? try recovery.recordings().first : nil
+        let flow = VoiceCaptureFlow(recovery: recovery, restoring: restored)
         func snapshot(_ extra: [String: String] = [:]) throws {
             var value = extra
             value["audio"] = flow.audioURL?.path ?? ""

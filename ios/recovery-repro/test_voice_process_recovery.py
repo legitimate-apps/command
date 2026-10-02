@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real process-death characterization against copied, unmodified production Swift sources.
 
-Default: 3 controls + 4 explicitly expected failures. --require-recovery turns those
+Default: 5 passing cases + 2 explicitly expected failures. --require-recovery turns those
 known gaps into ordinary failing acceptance tests. No simulator, microphone or server.
 """
 import argparse
@@ -29,7 +29,8 @@ let package = Package(name: "VoiceRecoveryProcessRepro", platforms: [.macOS(.v14
     targets: [.executableTarget(name: "Probe")])
 ''')
     for relative in (
-        "Transcription/VoiceCaptureFlow.swift", "Networking/CreateAttempt.swift",
+        "Transcription/VoiceCaptureFlow.swift", "Transcription/VoiceRecordingRecoveryStore.swift",
+        "Networking/CreateAttempt.swift",
         "Widgets/AssistantSurfaceLogic.swift",
     ):
         source = ROOT / "ios/Command" / relative
@@ -71,7 +72,11 @@ class VoiceProcessRecoveryTests(unittest.TestCase):
             self.assertTrue(self.observation.exists(), "child failed to reach the requested checkpoint")
             self.before = json.loads(self.observation.read_text())
             self.assertEqual(child.pid, int(self.before["pid"]))
-            self.assertEqual(self.before["audio"], str(self.audio))
+            self.audio = Path(self.before["audio"])
+            self.assertTrue(self.audio.is_relative_to(self.directory / "recovery"))
+            self.assertTrue(self.audio.exists())
+            with wave.open(str(self.audio), "rb") as recovered_audio:
+                self.assertEqual(recovered_audio.getnframes(), 1600)
             if scenario == "transcribing":
                 self.assertEqual(self.before["checkpoint"], "inside-transcriber")
             if scenario == "uncertain":
@@ -106,11 +111,9 @@ class VoiceProcessRecoveryTests(unittest.TestCase):
             self.assertIsInstance(value[key], str)
         return value
 
-    @unittest.expectedFailure
     def test_stopped_recording_is_discoverable_after_process_death(self):
         self.assertEqual(self.after["audio"], str(self.audio))
 
-    @unittest.expectedFailure
     def test_transcribing_recording_is_discoverable_after_process_death(self):
         self.assertEqual(self.after["audio"], str(self.audio))
 
@@ -127,7 +130,7 @@ class VoiceProcessRecoveryTests(unittest.TestCase):
         result = self.run_probe("same-process-retry")
         self.assertTrue(result["firstKey"])
         self.assertEqual(result["firstKey"], result["secondKey"])
-        self.assertTrue(self.audio.exists())
+        self.assertTrue(Path(result["audio"]).exists())
 
     def test_explicit_cancel_removes_recording(self):
         result = self.run_probe("cancel")

@@ -229,3 +229,20 @@ point; never restore from observer JSON. Do not remove expected-failure markers 
 Cleanup: read-only review helper finished; no helper implementation pending. The one native
 DerivedData lease was released. No simulator/emulator was created, and no probe/build/server
 process remains. Changes are on the same review branch/PR; no merge or deployment.
+
+## Reset-window implementation step 1 — 12:57 EDT
+- Operator reopened implementation until reset/stop instruction. Implemented an opt-in production
+  VoiceRecordingRecoveryStore and VoiceCaptureFlow restoration path for **stopped audio only**.
+- Atomic manifest publication follows successful protected audio copy; account/server/recreated
+  account scopes are isolated. Original temporary audio is released only after transfer succeeds.
+  Explicit terminal cleanup removes the manifest before audio so leftover files cannot replay.
+- Process probe now uses this actual production restore API, never its observer file. OBSERVED:
+  stopped and transcribing SIGKILL/relaunch assertions now PASS; review text and uncertain create
+  key remain expected failures (**5 passing cases, 2 expected failures**).
+- OBSERVED **26 native XCTest cases passed**, including all 20 existing voice-flow cases and six
+  new storage tests (source removal, scope isolation, discard, corruption, failed copy, path safety).
+  Logs: `/tmp/command-astra-1002/voice-audio-{step,xctest}.log`.
+- IMPORTANT: RecordingSheet still uses the nonpersistent default; account/UI lifecycle integration
+  is not yet wired. This is a verified production primitive, NOT a shipped end-to-end voice fix.
+- Next: persist review text/engine atomically and turn the corresponding process assertion green;
+  then pending original request/key, account coordinator, sheet dismissal semantics and app tests.

@@ -41,3 +41,10 @@ Implementation plan and ownership/retention contract:
 [Voice recovery design](../../docs/decisions/2026-10-02-voice-recovery.md).
 A future coordinator must be exercised through its production restore entry point. Merely teaching
 this test worker to reload its observations would conceal the defect and is not an implementation.
+
+## Implementation step 1 (12:57 EDT)
+
+The probe now uses the production account-scoped audio store and explicit flow restoration.
+Stopped/transcribing audio passes SIGKILL/relaunch checks: **5 cases pass, 2 remain expected
+failures** (review state and retry identity). The recording sheet is not wired to this store yet.
+The four-failure output above is the historical baseline. See the run state for current progress.
