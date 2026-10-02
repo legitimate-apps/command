@@ -116,3 +116,20 @@ compile Catalyst, then push this branch and open a PR. No new item after 12:10; 
   unsaved banner and Review showed exact text. Final save/DB check remains next.
 - PR opened: https://github.com/legitimate-apps/command/pull/1 . Both initial CI checks passed:
   PII scan (5s) and server lock/type/test (5m17s). Latest correction is iOS-only.
+
+## Verified actual capture recovery — 12:10 EDT
+- OBSERVED simulator UI: typed quick draft, terminated the app, relaunched and read the exact same
+  text from the accessibility tree and screen. Evidence: `draft-before.json`, `draft-after.json`,
+  `draft-recovered.jpg` under `/tmp/command-astra-1002/`.
+- OBSERVED offline editor: stopped only the disposable server, typed a title/body, confirmed
+  “Not saved — Could not connect to the server.” Disk JSON contained the original create payload
+  and UUID plus all later edits. Terminated the app, restarted server, relaunched Notes: the recovery
+  banner appeared and Review showed exact title/body. `recovery-banner.jpg`, `review-tree.json`.
+- OBSERVED Retry: HTTP POST `/api/notes` **201**, PATCH `/api/notes/1` **200**; SQLite contains
+  exactly **one note** with title “Offline recovery title” and complete body. UI shows the saved row;
+  recovery banner gone, editor recovery file removed, separate unsent quick draft retained.
+  Evidence: server log, `retry-tree.json`, `recovery-saved.jpg` in the same scratch directory.
+- OBSERVED final Catalyst build after multiwindow correction: **BUILD SUCCEEDED** in
+  `/tmp/command-astra-1002/catalyst-final-build.log`.
+- Latest timing: start nothing new after 12:15; wrap at 12:25. Full combined iOS verification and
+  durable evidence/PR update are the remaining steps, then stop owned resources.
