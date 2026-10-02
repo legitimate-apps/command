@@ -324,3 +324,14 @@ process remains. Changes are on the same review branch/PR; no merge or deploymen
 - This NEW durable save entry point is not yet called by RecordingSheet. Legacy saveNote retains
   its old changed-payload semantics; wire the durable entry point when enabling account recovery.
   Need an extended hard-kill test for later-edit reconciliation, then app integration/verification.
+
+## Reset-window reconciliation across SIGKILL — 13:20 EDT
+- Extended actual process-kill probe: persist an original create, edit review while awaiting its
+  response, SIGKILL, restore, replay original body/key/locale, then PATCH the returned ID with later
+  text and remove recovery after acknowledgment. No observer-file restoration or real server used.
+- Guarded the legacy save entry point from bypassing an existing durable reconciliation. Its
+  regression failed on prior source (1 test, 3 failures); fixed source has **40 native tests passing**.
+- OBSERVED **8 strict process-death cases pass** (`voice-reconcile-hardkill.log`), including the new
+  edited-pending-request case. Native output: `voice-reconcile-final-native.log`.
+- Review identified next corrections before UI wiring: restore must reread current manifest by ID
+  instead of trusting a cached listing; reject blank initial submission before freezing its payload.

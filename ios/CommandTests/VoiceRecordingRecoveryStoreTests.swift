@@ -216,6 +216,18 @@ final class VoiceRecordingRecoveryStoreTests: XCTestCase {
         XCTAssertEqual(record.savedNoteID, 7); XCTAssertEqual(record.savedText, "second")
         XCTAssertEqual(record.transcript, "third")
     }
+    func testLegacySaveCannotBypassPendingReconciliation() async throws {
+        let owner = store(), original = VoiceCaptureFlow(recovery: owner)
+        original.adopt(try source()); original.transcript = "pending create"
+        _ = await original.saveRecoveredNote(locale: nil, using: .init(create: { _ in
+            throw URLError(.networkConnectionLost)
+        }, update: { _, _ in }))
+        let restored = VoiceCaptureFlow(recovery: owner, restoring: try XCTUnwrap(owner.load().recordings.first))
+        var sent = false
+        let saved = await restored.saveNote { _, _, _ in sent = true; return nil }
+        XCTAssertFalse(sent); XCTAssertFalse(saved)
+        XCTAssertEqual(try owner.load().recordings.count, 1)
+    }
     func testManifestCannotReferenceAnOutsideFile() throws {
         let owner = store()
         XCTAssertThrowsError(try owner.audioURL(for: .init(version: 1, id: UUID(), filename: "../../outside.m4a")))

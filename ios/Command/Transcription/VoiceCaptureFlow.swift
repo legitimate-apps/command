@@ -158,6 +158,10 @@ final class VoiceCaptureFlow {
     /// A failed current save keeps the recording and shows the error for retry.
     func saveNote(using save: (_ text: String, _ engine: String, _ key: String) async -> String?) async -> Bool {
         guard !saving, !isCancelled, !Task.isCancelled, ownsRecording else { return false }
+        if noteSubmission != nil {
+            errorMessage = "Finish this recording's pending save before starting another submission."
+            return false
+        }
         if recovery != nil && recoveredRecordingID == nil {
             errorMessage = "This recording has no recovery copy yet. Keep Command open; it has not been sent."
             return false

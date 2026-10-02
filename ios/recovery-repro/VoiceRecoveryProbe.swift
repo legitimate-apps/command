@@ -11,7 +11,7 @@ struct VoiceRecoveryProbe {
         let recovery = VoiceRecordingRecoveryStore(root: directory.appendingPathComponent("recovery"),
             server: URL(string: "https://example.invalid")!, accountID: 1,
             username: "recovery-test", accountCreatedAt: "2026-10-02")
-        let restored = (mode == "relaunch" || mode == "retry") ? try recovery.load().recordings.first : nil
+        let restored = ["relaunch", "retry", "reconcile"].contains(mode) ? try recovery.load().recordings.first : nil
         let flow = VoiceCaptureFlow(recovery: recovery, restoring: restored)
         func snapshot(_ extra: [String: String] = [:]) throws {
             var value = extra
@@ -30,12 +30,21 @@ struct VoiceRecoveryProbe {
             return
         }
         if mode == "retry" {
-            // Re-enter the SAME payload to isolate the loss of retry identity from transcript loss.
-            flow.transcript = "Reviewed capture"
-            _ = await flow.saveNote { _, _, key in
-                try! snapshot(["key": key])
-                return "Response lost"
-            }
+            _ = await flow.saveRecoveredNote(locale: "fr-FR", using: .init(create: { request in
+                try snapshot(["key": request.key])
+                throw URLError(.networkConnectionLost)
+            }, update: { _, _ in }))
+            return
+        }
+        if mode == "reconcile" {
+            var key = "", body = "", locale = "", patchedBody = "", patchedID = ""
+            let saved = await flow.saveRecoveredNote(locale: "fr-FR", using: .init(create: { request in
+                key = request.key; body = request.body; locale = request.locale ?? ""
+                return 7
+            }, update: { id, text in patchedID = String(id); patchedBody = text }))
+            try snapshot(["key": key, "createBody": body, "createLocale": locale,
+                          "patchedID": patchedID, "patchedBody": patchedBody,
+                          "saved": String(saved), "remaining": String(try recovery.load().recordings.count)])
             return
         }
         flow.adopt(audio)
@@ -52,13 +61,14 @@ struct VoiceRecoveryProbe {
             _ = await flow.transcribe(immediateUse: false) { _ in ("Spoken capture", "sfspeech") }
             flow.transcript = "Latest edited review"
             try snapshot(); await hold()
-        case "uncertain":
+        case "uncertain", "uncertain-edited":
             flow.transcript = "Reviewed capture"
-            _ = await flow.saveNote { _, _, key in
-                try! snapshot(["key": key, "checkpoint": "request-awaiting-response"])
+            _ = await flow.saveRecoveredNote(locale: "en-US", using: .init(create: { request in
+                if mode == "uncertain-edited" { flow.transcript = "Later review edits" }
+                try snapshot(["key": request.key, "checkpoint": "request-awaiting-response"])
                 await hold()
-                return "Response lost"
-            }
+                throw URLError(.networkConnectionLost)
+            }, update: { _, _ in }))
         case "cancel":
             flow.cancel(); try snapshot()
         case "success":

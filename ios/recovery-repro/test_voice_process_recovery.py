@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real process-death characterization against copied, unmodified production Swift sources.
 
-All seven baseline cases now pass through the opt-in production restore API.
+Eight crash/relaunch and control cases exercise the opt-in production restore API.
 --require-recovery remains compatible with the original failing-baseline invocation. No simulator, microphone or server.
 """
 import argparse
@@ -59,6 +59,7 @@ class VoiceProcessRecoveryTests(unittest.TestCase):
             "test_transcribing_recording_is_discoverable_after_process_death": "transcribing",
             "test_review_text_and_engine_survive_process_death": "review",
             "test_uncertain_create_reuses_key_after_process_death": "uncertain",
+            "test_later_edits_reconcile_original_request_after_process_death": "uncertain-edited",
         }
         scenario = scenarios.get(self._testMethodName)
         if scenario:
@@ -79,7 +80,7 @@ class VoiceProcessRecoveryTests(unittest.TestCase):
                 self.assertEqual(recovered_audio.getnframes(), 1600)
             if scenario == "transcribing":
                 self.assertEqual(self.before["checkpoint"], "inside-transcriber")
-            if scenario == "uncertain":
+            if scenario in ("uncertain", "uncertain-edited"):
                 self.assertEqual(self.before["checkpoint"], "request-awaiting-response")
                 self.assertTrue(self.before["key"])
             if scenario == "review":
@@ -89,9 +90,9 @@ class VoiceProcessRecoveryTests(unittest.TestCase):
             child.communicate(timeout=5)
             self.assertEqual(child.returncode, -signal.SIGKILL)
             self.assertTrue(self.audio.exists(), "SIGKILL must bypass all app cleanup callbacks")
-            self.after = self.run_probe("retry" if scenario == "uncertain" else "relaunch")
+            self.after = self.run_probe({"uncertain": "retry", "uncertain-edited": "reconcile"}.get(scenario, "relaunch"))
             self.assertNotEqual(self.before["pid"], self.after["pid"])
-            if scenario == "uncertain":
+            if scenario in ("uncertain", "uncertain-edited"):
                 self.assertIsInstance(self.after.get("key"), str)
                 self.assertTrue(self.after["key"], "retry must reach the request boundary")
 
@@ -123,6 +124,16 @@ class VoiceProcessRecoveryTests(unittest.TestCase):
 
     def test_uncertain_create_reuses_key_after_process_death(self):
         self.assertEqual(self.after["key"], self.before["key"])
+
+    def test_later_edits_reconcile_original_request_after_process_death(self):
+        self.assertEqual(self.after["key"], self.before["key"])
+        self.assertEqual(self.after["createBody"], "Reviewed capture")
+        self.assertEqual(self.after["createLocale"], "en-US")
+        self.assertEqual(self.after["patchedID"], "7")
+        self.assertEqual(self.after["patchedBody"], "Later review edits")
+        self.assertEqual(self.after["saved"], "true")
+        self.assertEqual(self.after["remaining"], "0")
+        self.assertFalse(self.audio.exists())
 
     def test_failed_save_reuses_key_without_process_death(self):
         result = self.run_probe("same-process-retry")
