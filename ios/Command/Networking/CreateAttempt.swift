@@ -2,7 +2,7 @@ import Foundation
 
 /// One intended create, retained after ambiguous failures. A changed payload or an explicit
 /// reset starts a new intent; success clears only the attempt that actually finished.
-struct CreateAttempt {
+struct CreateAttempt: Codable {
     private var payload: Data?
     private var currentKey: String?
 

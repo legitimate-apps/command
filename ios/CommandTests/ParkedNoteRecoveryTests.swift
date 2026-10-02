@@ -8,13 +8,14 @@ private final class RecoveryWireProtocol: URLProtocol {
     nonisolated(unsafe) static var onGet: (() -> Void)?
     nonisolated(unsafe) static var onPost: (() -> Void)?
     nonisolated(unsafe) static var holdPost = false
+    nonisolated(unsafe) static var returnedHidden = false
     static let noteJSON = Data("""
     {"id":42,"account_id":1,"body":"Server copy","title":"Server copy","title_status":"user",
     "source":"typed","created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:00:00Z"}
     """.utf8)
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        gets = []; posts = []; onGet = nil; onPost = nil; holdPost = false
+        gets = []; posts = []; onGet = nil; onPost = nil; holdPost = false; returnedHidden = false
     }
     static func releaseGets(includesNote: Bool) {
         lock.lock(); let pending = gets; gets = []; lock.unlock()
@@ -41,6 +42,8 @@ private final class RecoveryWireProtocol: URLProtocol {
         } else { respond(Self.noteJSON) }
     }
     func respond(_ data: Data) {
+        let data = Self.returnedHidden
+            ? Data(String(decoding: data, as: UTF8.self).replacingOccurrences(of: "\"source\":", with: "\"hidden\":true,\"source\":").utf8) : data
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200,
             httpVersion: nil, headerFields: ["Content-Type":"application/json"])!, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
@@ -59,6 +62,25 @@ final class ParkedNoteRecoveryTests: XCTestCase {
         let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(Note.self, from: RecoveryWireProtocol.noteJSON)
     }
+    func testHidingAnOfflineEditPersistsItsVeilForRecovery() async throws {
+        RecoveryWireProtocol.reset(); RecoveryWireProtocol.returnedHidden = true
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let account = Account(id: 1, username: "tester", displayName: nil, createdAt: "2026-01-01T00:00:00Z")
+        func disk() -> NoteRecoveryStore {
+            NoteRecoveryStore(root: root, server: URL(string: "https://example.com")!, account: account)
+        }
+        let store = NotesStore(recovery: disk())
+        let owner = UUID()
+        let saver = store.resumeEditor(saver: NoteSaver(noteId: 42, text: "Saved"), owner: owner)
+        saver.text = "Offline private changes"
+        let hidden = await store.setHidden(id: 42, hidden: true, client: client())
+        XCTAssertTrue(hidden)
+        store.releaseEditor(saver: saver, owner: owner, park: true)
+        let restored = try XCTUnwrap(NotesStore(recovery: disk()).unsavedEdits.first?.saver)
+        XCTAssertTrue(restored.hidden, "review without a server row must not expose a newly hidden note")
+    }
+
     func testReopeningResumesParkedTextAndIdentityAndReparksSameSaver() {
         let store = NotesStore(), original = NoteSaver(noteId: 42, text: "Server copy")
         original.text = "Server copy with offline edits"

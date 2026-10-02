@@ -115,7 +115,8 @@ final class AppState {
     var lastError: String?
 
     /// Shared notes state (capture bar + Notes list stay in sync).
-    let notes = NotesStore()
+    private(set) var notes = NotesStore()
+    private let noteRecoveryRoot: URL
     /// Shared delegatee roster (People list + assignee pickers).
     let people = PeopleStore()
     /// Shared goals + assignments.
@@ -183,7 +184,8 @@ final class AppState {
     /// Whether a server has been chosen yet. Drives `.needsServer`.
     var hasServer: Bool { !serverURLString.trimmingCharacters(in: .whitespaces).isEmpty }
 
-    init(client: APIClient? = nil) {
+    init(client: APIClient? = nil, noteRecoveryRoot: URL = NoteRecoveryStore.defaultRoot) {
+        self.noteRecoveryRoot = noteRecoveryRoot
         Self.migrateLegacyServerURL(UserDefaults.standard)
         let saved = client?.baseURL.absoluteString ?? UserDefaults.standard.string(forKey: Self.urlKey) ?? Self.defaultServerURL
         serverURLString = saved
@@ -205,8 +207,13 @@ final class AppState {
     /// Wire the client's session-expiry callback back to us. Reinstalled whenever the
     /// client is rebuilt (a server-URL change), so the hook never points at a stale client.
     private func installClientHooks() {
-        client.onUnauthorized = { [weak self] in
-            Task { @MainActor in self?.handleSessionExpired() }
+        let installedClient = client
+        client.onUnauthorized = { [weak self, weak installedClient] identity in
+            Task { @MainActor in
+                guard let self, let installedClient, self.client === installedClient,
+                      installedClient.isCurrentSession(identity) else { return }
+                self.handleSessionExpired()
+            }
         }
     }
 
@@ -581,6 +588,10 @@ final class AppState {
     /// Post-sign-in fan-out: load the entitlement (consent + subscription state) and
     /// bind RevenueCat's identity to this account so its purchase webhook maps back.
     private func onSignedIn() async {
+        notes.deactivate()
+        if let account {
+            notes = NotesStore(recovery: NoteRecoveryStore(root: noteRecoveryRoot, server: client.baseURL, account: account))
+        }
         await refreshEntitlement()
         // RevenueCat identity + offering load run OFF the critical path. A slow or
         // stalled StoreKit product fetch — e.g. a freshly-created sandbox product still
@@ -750,6 +761,7 @@ final class AppState {
     /// no longer exists.
     func forgetDeletedAccount() async {
         lock.reset()
+        notes.deactivate(deleteRecovery: true)
         tearDownSession()
         lastError = nil
     }
@@ -784,8 +796,8 @@ final class AppState {
         UserDefaults.standard.removeObject(forKey: Self.manualTimezoneKey)   // it was that account's choice
         entitlement = nil
         Task { [subscription] in await subscription.signOut() }
-        notes.notes = []
-        notes.draft = ""
+        notes.deactivate()
+        notes = NotesStore()
         people.delegatees = []
         tasks.assignments = []
         tasks.goals = []

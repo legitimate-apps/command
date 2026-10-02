@@ -56,6 +56,27 @@ final class KeyedCreateTests: XCTestCase {
     }
     private var keys: [String?] { CreateWireProtocol.creates.map { $0.value(forHTTPHeaderField: "Idempotency-Key") } }
 
+    func testQuickNoteRetryAfterRelaunchRetainsTheOriginalKey() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let account = Account(id: 1, username: "tester", displayName: nil, createdAt: "2026-01-01T00:00:00Z")
+        func disk() -> NoteRecoveryStore {
+            NoteRecoveryStore(root: root, server: URL(string: "https://example.com")!, account: account)
+        }
+        CreateWireProtocol.reset(statuses: [500, 201])
+        let original = NotesStore(recovery: disk())
+        original.draft = "Idea"
+        let first = await original.saveDraft(client: client())
+        XCTAssertFalse(first)
+        let relaunched = NotesStore(recovery: disk())
+        XCTAssertEqual(relaunched.draft, "Idea")
+        let retry = await relaunched.saveDraft(client: client())
+        XCTAssertTrue(retry)
+        XCTAssertEqual(keys.count, 2)
+        XCTAssertEqual(keys.first, keys.last)
+        XCTAssertNil(try disk().loadDraft())
+    }
+
     func testEveryEntityCreateHasFreshKeyPerAction() async throws {
         CreateWireProtocol.reset()
         let client = client()

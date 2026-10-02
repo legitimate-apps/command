@@ -22,7 +22,13 @@ struct CalendarView: View {
     @State private var savedHidden = false
     @State private var showRecording = false
     @State private var captureMode: CaptureMode = .note
-    @State private var captureText = ""   // shared across modes — switching mode keeps the text
+    // The account-scoped store owns the text, including after a tab remount or app relaunch.
+    private var captureText: String {
+        get { app.notes.draft }
+        nonmutating set {
+            app.notes.draft = newValue; app.log.draft = newValue; app.schedule.draft = newValue
+        }
+    }
     @State private var showDatePicker = false
     @State private var showTimePicker = false
     @State private var showLogDatePicker = false
@@ -268,11 +274,6 @@ struct CalendarView: View {
             .toolbarBackground(.hidden, for: .navigationBar)   // transparent bar; paper shows through
             .toolbar { todayToolbar }
             .overlay(alignment: .top) { if showSaved { savedToast } }
-            .onChange(of: captureText) { _, text in
-                // These stores share this field. Observe edits, including a change back to the
-                // original text, so a failed submission's key never follows a new draft.
-                app.notes.draft = text; app.log.draft = text; app.schedule.draft = text
-            }
             .onChange(of: captureMode) { _, mode in
                 dateOverridden = false   // a mode switch re-syncs the date to the big calendar
                 if mode == .schedule {
@@ -479,7 +480,7 @@ struct CalendarView: View {
     }
 
     private var inputField: some View {
-        TextField(composePlaceholder, text: $captureText, axis: .vertical)
+        TextField(composePlaceholder, text: Binding(get: { captureText }, set: { captureText = $0 }), axis: .vertical)
             .focused($fieldFocused)
             .font(Typeface.body(16))
             .foregroundStyle(Palette.ink)
@@ -683,7 +684,7 @@ struct CalendarView: View {
 
     private var activeError: String? {
         switch captureMode {
-        case .note: return app.notes.errorMessage
+        case .note: return app.notes.recoveryError ?? app.notes.errorMessage
         case .log: return app.log.errorMessage
         case .schedule: return app.schedule.errorMessage
         }
@@ -729,13 +730,15 @@ struct CalendarView: View {
 
     private func send(hidden: Bool = false) {
         let sentText = captureText, sentMode = captureMode
+        let notes = app.notes, client = app.client
         Task {
+            guard app.notes === notes else { return }
             // Push the shared entry text into the active store, then save.
             let ok: Bool
             switch sentMode {
             case .note:
-                app.notes.draft = sentText
-                ok = await app.notes.saveDraft(hidden: hidden, client: app.client)
+                notes.draft = sentText
+                ok = await notes.saveDraft(hidden: hidden, client: client)
             case .log:
                 app.log.draft = sentText
                 ok = await app.log.logDraft(hidden: hidden, client: app.client)
@@ -743,7 +746,7 @@ struct CalendarView: View {
                 app.schedule.draft = sentText
                 ok = await app.schedule.addToQueue(hidden: hidden, client: app.client)
             }
-            guard ok else { return }
+            guard ok, app.notes === notes else { return }
             Haptics.success()
             // A response to the submitted text must not erase typing or switch the mode's
             // date after the user has moved on to another capture.

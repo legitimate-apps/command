@@ -44,6 +44,10 @@ struct NotesView: View {
                         }
                         .transition(.move(edge: .top).combined(with: .opacity))
                     }
+                    if let error = app.notes.recoveryError {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .font(.footnote).foregroundStyle(Palette.danger).padding(12)
+                    }
                     if !app.notes.unsavedEdits.isEmpty { unsavedEditsBanner }
                     content
                 }
@@ -133,7 +137,7 @@ struct NotesView: View {
                 .font(.system(size: 14))
                 .foregroundStyle(Palette.danger)
                 .accessibilityHidden(true)
-            Text(count == 1 ? "1 note edit couldn't be saved." : "\(count) note edits couldn't be saved.")
+            Text(count == 1 ? "1 note has unsaved edits on this device." : "\(count) notes have unsaved edits on this device.")
                 .font(Typeface.body(13))
                 .foregroundStyle(Palette.ink)
             Spacer(minLength: 8)
@@ -161,7 +165,7 @@ struct NotesView: View {
                 .disabled(app.notes.isRetrying)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("These edits never reached the server and will be lost.")
+            Text("This removes the local recovery copies. Any changes already saved on the server will remain.")
         }
     }
 
