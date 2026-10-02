@@ -93,3 +93,13 @@ compile Catalyst, then push this branch and open a PR. No new item after 12:10; 
 - Actual microphone prompts/audio hardware remain outside this verification claim.
 - Recovery and voice commits are pushed to the remote branch. MCP integration and rendered
   relaunch check are next; no new feature scope is being opened.
+
+## Verified MCP integration and Catalyst — 12:00 EDT
+- Integrated helper commits `1bc8935` and `1f947ab`: agents can complete one original recurring
+  occurrence without completing the series; invalid dates fail before writes; newly generated
+  completion facts inherit hidden assignment privacy. Shared core covers REST/MCP/in-app paths.
+- OBSERVED in helper worktree on exactly these server sources: **778 pytest tests passed**,
+  Ruff clean, mypy clean across 102 files. Native timezone/DST/boundary regression cases pass.
+  Detailed commands, controls and MCP/REST/SQLite observations: `state/ASTRA-MCP-1002.md`.
+- OBSERVED: integrated app **Mac Catalyst BUILD SUCCEEDED**. Log:
+  `/tmp/command-astra-1002/catalyst-build.log`. This is compilation evidence, not Mac UI evidence.
