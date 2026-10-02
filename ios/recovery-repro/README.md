@@ -66,3 +66,21 @@ The unchanged reviewed capture now restores its persisted create key and payload
 request checkpoint blocks submission. Strict mode: **7 passed, no expected failures**. Native
 source suite: **30 passed**. Production app/account/UI integration and later-edit reconciliation
 remain required; passing this initial matrix alone does not establish complete voice recovery.
+
+## Local REST and SQLite acceptance
+
+`test_voice_wire_recovery.py` builds the same production-source probe, starts the actual server
+on a reserved loopback socket with a fresh temporary SQLite database and no inherited model
+credentials, and uses the actual Swift APIClient with ephemeral cookies. It kills the client
+AFTER a real POST commits but BEFORE the flow receives the note ID. A new process restores the
+original request and later edits, repeats POST, then PATCHes the same note. Assertions inspect
+SQLite before and after, original key/locale, separate process IDs, terminal recovery and audio
+cleanup. The observation file is removed before relaunch. All child processes stop in `finally`.
+
+```sh
+python3 ios/recovery-repro/test_voice_wire_recovery.py --build-dir "$VOICE_REPRO_DD"
+```
+
+Requires the existing `server/.venv` (or `--server-python PATH`). Current result: **1 passed**;
+HTTP **POST 201, POST 201, PATCH 200**, SQLite **one note** with the later review body. This proves
+the wire/persistence boundary, not the still-unwired app screen or unfinished M4A decoding.

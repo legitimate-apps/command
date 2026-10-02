@@ -361,3 +361,17 @@ process remains. Changes are on the same review branch/PR; no merge or deploymen
 - Still unfinished: shared microphone/account lifecycle coordinator, retained sheet disappearance,
   real recorder crash behavior, acknowledged assistant handoff and actual app recovery UI. Next:
   wire-test durable note reconciliation against the local REST server before activating app recovery.
+
+## Reset-window real REST reconciliation — 13:31 EDT
+- Added a repeatable local-wire acceptance test using production VoiceCaptureFlow/store/APIClient,
+  a credential-free disposable server on a reserved loopback socket and a fresh SQLite database.
+- Client receives real POST success, withholds acknowledgment from the flow, persists later review
+  edits, then is SIGKILLed. Relaunch restores without its observer file and reconciles the original
+  request. SQLite assertions prove exactly one note with the original key/engine/locale and later
+  review body; acknowledged completion removes recovery/audio.
+- OBSERVED **1 wire test passed**, HTTP **POST 201 + POST 201 + PATCH 200**; original **8 process
+  cases passed** with the expanded actual-APIClient build. Logs: `voice-wire-result.log` and
+  `voice-wire-compile.log`. The disposable server/client stopped and fixtures were removed.
+- Next: implement explicit retain-on-disappearance/async suspension behavior in the flow before
+  coordinator/UI integration. No app recovery UI is enabled yet; actual M4A crash behavior and
+  durable assistant handoff remain unverified/unimplemented.

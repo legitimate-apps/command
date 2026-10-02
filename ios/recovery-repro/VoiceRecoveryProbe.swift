@@ -7,6 +7,10 @@ struct VoiceRecoveryProbe {
     static func main() async throws {
         let args = CommandLine.arguments
         let mode = args[1], directory = URL(fileURLWithPath: args[2], isDirectory: true)
+        if mode.hasPrefix("wire-") {
+            try await wire(mode: mode, directory: directory, server: URL(string: args[3])!)
+            return
+        }
         let audio = directory.appendingPathComponent("recording.wav")
         let recovery = VoiceRecordingRecoveryStore(root: directory.appendingPathComponent("recovery"),
             server: URL(string: "https://example.invalid")!, accountID: 1,
@@ -85,5 +89,57 @@ struct VoiceRecoveryProbe {
         default:
             fatalError("Unknown test mode")
         }
+    }
+}
+
+private extension VoiceRecoveryProbe {
+    @MainActor
+    static func wire(mode: String, directory: URL, server: URL) async throws {
+        precondition(server.host == "127.0.0.1" && server.scheme == "http")
+        let client = APIClient(baseURL: server, configuration: .ephemeral)
+        let username = "voice-recovery-test", password = "local-fixture-password-only"
+        if mode == "wire-seed" { try await client.register(username: username, password: password, displayName: nil) }
+        let account = try await client.login(username: username, password: password)
+        let recovery = VoiceRecordingRecoveryStore(root: directory.appendingPathComponent("recovery"),
+            server: server, accountID: account.id, username: account.username, accountCreatedAt: account.createdAt)
+        let record = mode == "wire-reconcile" ? try recovery.load().recordings.first : nil
+        let flow = VoiceCaptureFlow(recovery: recovery, restoring: record)
+        if mode == "wire-seed" {
+            flow.adopt(directory.appendingPathComponent("recording.wav"))
+            flow.transcript = "Original voice capture"
+        }
+        var observations: [String: String] = [:]
+        func snapshot() throws {
+            observations["pid"] = String(ProcessInfo.processInfo.processIdentifier)
+            observations["audio"] = flow.audioURL?.path ?? ""
+            observations["review"] = flow.transcript
+            try JSONSerialization.data(withJSONObject: observations, options: [.sortedKeys])
+                .write(to: directory.appendingPathComponent("observation.json"), options: .atomic)
+        }
+        let saved = await flow.saveRecoveredNote(locale: mode == "wire-seed" ? "en-US" : "fr-FR",
+            using: .init(create: { request in
+                let note = try await client.createNote(body: request.body, source: "voice", engine: request.engine,
+                    locale: request.locale, idempotencyKey: request.key)
+                observations["key"] = request.key
+                observations["noteID"] = String(note.id)
+                observations["createBody"] = request.body
+                observations["createLocale"] = request.locale ?? ""
+                if mode == "wire-seed" {
+                    // The server committed; withhold that acknowledgment from the production flow.
+                    flow.transcript = "Later voice review edits"
+                    observations["checkpoint"] = "server-committed-before-flow-ack"
+                    try snapshot()
+                    while true { try await Task.sleep(for: .seconds(3600)) }
+                }
+                return note.id
+            }, update: { id, text in
+                let note = try await client.updateNote(id: id, body: text)
+                observations["patchedID"] = String(note.id)
+                observations["patchedBody"] = note.body
+            }))
+        observations["saved"] = String(saved)
+        observations["remaining"] = String(try recovery.load().recordings.count)
+        observations["error"] = flow.errorMessage ?? ""
+        try snapshot()
     }
 }

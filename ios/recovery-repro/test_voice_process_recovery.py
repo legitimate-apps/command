@@ -30,11 +30,18 @@ let package = Package(name: "VoiceRecoveryProcessRepro", platforms: [.macOS(.v14
 ''')
     for relative in (
         "Transcription/VoiceCaptureFlow.swift", "Transcription/VoiceRecordingRecoveryStore.swift",
-        "Networking/CreateAttempt.swift",
-        "Widgets/AssistantSurfaceLogic.swift",
+        "Networking/CreateAttempt.swift", "Networking/APIClient.swift",
+        "Networking/Models.swift", "Networking/ServerInfo.swift",
+        "Widgets/AssistantSurfaceLogic.swift", "Features/Notes/MarkdownSyntax.swift",
     ):
         source = ROOT / "ios/Command" / relative
         shutil.copyfile(source, sources / source.name)
+    # APIClient's unused model-list endpoint needs this shape from the UI store. Copy its
+    # declaration verbatim without pulling in the unrelated assistant streaming subsystem.
+    agent_source = (ROOT / "ios/Command/Features/Agent/AgentStore.swift").read_text()
+    start = agent_source.index("struct AgentModelTier:")
+    end = agent_source.index("\n}", start) + 2
+    (sources / "AgentModelTier.swift").write_text(agent_source[start:end] + "\n")
     shutil.copyfile(Path(__file__).with_name("VoiceRecoveryProbe.swift"), sources / "VoiceRecoveryProbe.swift")
     subprocess.run(["swift", "build", "--package-path", str(package), "--jobs", "2"], check=True, timeout=120)
     result = subprocess.run(["swift", "build", "--package-path", str(package), "--show-bin-path"],
