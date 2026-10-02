@@ -81,3 +81,15 @@ compile Catalyst, then push this branch and open a PR. No new item after 12:10; 
 - UI behavior and Catalyst build remain pending. This evidence does not claim production deployment.
 - Latest timing checkpoint: commit each verified step immediately; start nothing new at 12:10,
   wrap at 12:20. Absolute stop remains 13:00/reset.
+
+## Verified voice integration — 11:57 EDT
+- Integrated `977c54e` (helper source commit `2ade749`): stale permission, transcription and save
+  completions cannot revive cancelled capture or discard newer review/audio.
+- OBSERVED: full iOS app compiled and all **20 voice XCTest cases passed**, no failures.
+  Evidence: `/tmp/command-astra-1002/ios-voice-tests.log`, xcresult
+  `Logs/Test/Test-Command-2026.10.02_11-54-55--0400.xcresult` in the leased DD.
+- Helper native controls: original implementation failed 35 assertions across 11 methods;
+  restored fixed source passed all 20 cases. Details in `state/ASTRA-VOICE-1002.md`.
+- Actual microphone prompts/audio hardware remain outside this verification claim.
+- Recovery and voice commits are pushed to the remote branch. MCP integration and rendered
+  relaunch check are next; no new feature scope is being opened.
